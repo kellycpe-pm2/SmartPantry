@@ -45,7 +45,7 @@ fun CreateIngredientScreen(
                 title = {
                     Text(
                         text = "Create Ingredient",
-                        fontSize = 20.sp,
+                        style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold,
                         color = scheme.primary
                     )
