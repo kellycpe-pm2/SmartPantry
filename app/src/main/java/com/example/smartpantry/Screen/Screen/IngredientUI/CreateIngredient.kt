@@ -87,7 +87,7 @@ fun CreateIngredientScreen(
             OutlineTextField(
                 value = ingredientName,
                 onValueChange = { ingredientName = it },
-                label = "Ingredient Name *",
+                label = "Ingredient Name",
                 image = Icons.Default.Inventory
             )
 
