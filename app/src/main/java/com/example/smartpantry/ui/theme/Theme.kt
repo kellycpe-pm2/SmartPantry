@@ -1,57 +1,77 @@
 package com.example.smartpantry.ui.theme
 
-import android.app.Activity
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
+private val LightColors = lightColorScheme(
+    //anything with on____ is text
+    primary = LightPrimary,
+    onPrimary = LightOnPrimary,
+
+    primaryContainer = LightPrimaryContainer,
+    onPrimaryContainer = LightPrimary,
+
+    background = LightBackground,
+    onBackground = LightText,
+
+    surface = LightBackground,
+    onSurface = LightText,
+
+    surfaceVariant = LightCard,
+    onSurfaceVariant = LightMutedText,
+
+    outline = LightMutedText,
+    outlineVariant = LightBorder,
+
+    // Copies of the above, so no Material default purple shows up in other components
+    secondary = LightPrimary,
+    onSecondary = LightOnPrimary,
+    secondaryContainer = LightPrimaryContainer,
+    onSecondaryContainer = LightPrimary,
+    surfaceContainer = LightCard,        // nav bar
+    surfaceContainerHigh = LightCard,    // dialogs
+    surfaceContainerHighest = LightCard
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
+private val DarkColors = darkColorScheme(
+    primary = DarkPrimary,
+    onPrimary = DarkOnPrimary,
 
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+    primaryContainer = DarkPrimaryContainer,
+    onPrimaryContainer = DarkPrimary,
+
+    background = DarkBackground,
+    onBackground = DarkText,
+
+    surface = DarkBackground,
+    onSurface = DarkText,
+
+    surfaceVariant = DarkCard,
+    onSurfaceVariant = DarkMutedText,
+
+    outline = DarkMutedText,
+    outlineVariant = DarkBorder,
+
+    // (same with light)Copies of the above, so no Material default purple shows up in other components
+    secondary = DarkPrimary,
+    onSecondary = DarkOnPrimary,
+    secondaryContainer = DarkPrimaryContainer,
+    onSecondaryContainer = DarkPrimary,
+    surfaceContainer = DarkCard,
+    surfaceContainerHigh = DarkCard,
+    surfaceContainerHighest = DarkCard
 )
 
 @Composable
 fun SmartPantryTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
+    darkTheme: Boolean = isSystemInDarkTheme(), // follows the phone's setting
     content: @Composable () -> Unit
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
-
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = if (darkTheme) DarkColors else LightColors,
         typography = Typography,
         content = content
     )

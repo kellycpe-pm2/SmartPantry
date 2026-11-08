@@ -1,0 +1,6 @@
+<!--for now only 3 language, havent test yet-->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en"/>
+    <locale android:name="ms"/>
+    <locale android:name="zh"/>
+</locale-config>

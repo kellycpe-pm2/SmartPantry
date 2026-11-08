@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -25,6 +26,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.ecopantry.app.UserDashboardScreen
+import com.example.smartpantry.Screen.Profile.AccountSecurityScreen
+import com.example.smartpantry.Screen.Profile.ProfileScreen
+import com.example.smartpantry.Screen.Profile.UserProfile
 
 // === YOUR COLOR PALETTE ===
 val Primary = Color(0xFFB8E7E7)
@@ -51,6 +55,17 @@ fun AppNavHost(
         BottomNavItem("records", "Log", Icons.Filled.List),
         BottomNavItem("profile", "Profile", Icons.Filled.Eco)
     )
+
+    // temperory, will change it to real user in the future
+    // Change role to "admin" to test the admin menu.
+    val profile = remember {
+        UserProfile(
+            displayName = "Maya Patel", email = "maya.patel@gmail.com",
+            phoneNo = "0123456789",
+            role = "user", memberSince = "September 2026",
+            gender = "Female", dateOfBirth = "2000-05-21"
+        )
+    }
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -147,7 +162,32 @@ fun AppNavHost(
                 UserDashboardScreen()
             }
             composable("profile") {
-                // ProfileScreen()
+                ProfileScreen(
+                    profile = profile,
+                    onChangePassword = { /* TODO: admin change password screen */ },
+                    onAccountSecurity = { navController.navigate("account_security") },
+                    onMyFavourite = { navController.navigate("favourites") },
+                    onShoppingList = { navController.navigate("shopping_list") },
+                    onLogout = { /* TODO: sign out, then go to login */ },
+                    onDeleteAccount = { /* TODO */ }
+                )
+            }
+            composable("account_security") {
+                AccountSecurityScreen(
+                    profile = profile,
+                    onSave = { /* TODO: save to backend */ },
+                    onChangeEmail = { newEmail -> /* TODO: Supabase */ },
+                    onChangePassword = { /* TODO: change password screen */ },
+                    onDeleteAccount = { /* TODO: delete account, then go to login */ },
+                    onBack = { navController.popBackStack() }
+                )
+            }
+            composable("favourites") {
+                // Member C's screen
+                UserDashboardScreen()
+            }
+            composable("shopping_list") {
+                // Member C's screen
                 UserDashboardScreen()
             }
             composable("add") {
