@@ -1,13 +1,12 @@
 package com.example.smartpantry.ui.navigation
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Dashboard
-import androidx.compose.material.icons.filled.Eco
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.List
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -15,7 +14,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -26,24 +30,15 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.smartpantry.Screen.Screen.IngredientUI.CreateIngredientScreen
-// Make sure this import matches your actual UserDashboardScreen package
-import com.ecopantry.app.UserDashboardScreen
 import com.example.smartpantry.Screen.Profile.AccountSecurityScreen
 import com.example.smartpantry.Screen.Profile.ProfileScreen
 import com.example.smartpantry.Screen.Profile.UserProfile
-
-// === YOUR COLOR PALETTE ===
-val Primary = Color(0xFFB8E7E7)
-val PrimaryDark = Color(0xFF235F62)
-val Background = Color(0xFFFFFFFF)
-val SecondaryBg = Color(0xFFF3FAFA)
-val MutedText = Color(0xFF667B7D)
-val DarkButton = Color(0xFF1A2426)
+import com.example.smartpantry.ui.home.UserDashboardScreen
 
 data class BottomNavItem(
     val route: String,
     val label: String,
-    val icon: ImageVector
+    val iconPath: String
 )
 
 @Composable
@@ -51,15 +46,29 @@ fun AppNavHost(
     navController: NavHostController = rememberNavController()
 ) {
     val items = listOf(
-        BottomNavItem("home", "Home", Icons.Filled.Home),
-        BottomNavItem("pantry", "Pantry", Icons.Filled.Eco),
-        BottomNavItem("recipes", "Recipes", Icons.Filled.Dashboard),
-        BottomNavItem("records", "Log", Icons.Filled.List),
-        BottomNavItem("profile", "Profile", Icons.Filled.Eco)
+        BottomNavItem(
+            "home", "Home",
+            "M3 10 L12 3 L21 10 M5 9 V21 H10 V15 H14 V21 H19 V9"
+        ),
+        BottomNavItem(
+            "pantry", "Pantry",
+            "M7 3 H17 V6 H7 Z M8 6 L5 10 V19 Q5 21 7 21 H17 Q19 21 19 19 V10 L16 6 M5 12 H19"
+        ),
+        BottomNavItem(
+            "recipes", "Recipes",
+            "M7 14 C2 14 2 7 7 7 C8 2 16 2 17 7 C22 7 22 14 17 14 V21 H7 Z M7 17 H17"
+        ),
+        BottomNavItem(
+            "records", "Record",
+            "M5 20 V14 M10 20 V10 M15 20 V6 M20 20 V3"
+        ),
+        BottomNavItem(
+            "profile", "Profile",
+            "M16 8 A4 4 0 1 1 8 8 A4 4 0 1 1 16 8 M4 21 C4 13 20 13 20 21"
+        )
     )
 
-    // temperory, will change it to real user in the future
-    // Change role to "admin" to test the admin menu.
+    // temporary, will change it to real user in the future
     val profile = remember {
         UserProfile(
             displayName = "Maya Patel", email = "maya.patel@gmail.com",
@@ -72,73 +81,27 @@ fun AppNavHost(
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
-    // FIXED: Added "records" instead of "log", and removed "add" so the bar hides when adding
     val bottomNavRoutes = listOf("home", "pantry", "recipes", "records", "profile")
 
     Scaffold(
-        containerColor = Background,
         bottomBar = {
             if (currentRoute in bottomNavRoutes) {
-                NavigationBar(
-                    containerColor = Background,
-                    tonalElevation = 0.dp,
-                    modifier = Modifier.height(90.dp)
-                ) {
-                    // Left side items
-                    items.take(2).forEach { item ->
-                        NavBarItem(
-                            item = item,
-                            selected = currentRoute == item.route,
-                            onClick = {
-                                navController.navigate(item.route) {
-                                    launchSingleTop = true
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    restoreState = true
-                                }
+                FloatingBottomBar(
+                    items = items,
+                    currentRoute = currentRoute,
+                    onTabSelected = { route ->
+                        navController.navigate(route) {
+                            launchSingleTop = true
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
                             }
-                        )
+                            restoreState = true
+                        }
+                    },
+                    onAddClick = {
+                        navController.navigate("add") { launchSingleTop = true }
                     }
-
-                    // Central Floating Action Button
-                    FloatingActionButton(
-                        onClick = {
-                            navController.navigate("add") {
-                                launchSingleTop = true
-                            }
-                        },
-                        containerColor = DarkButton,
-                        shape = CircleShape,
-                        modifier = Modifier
-                            .padding(horizontal = 8.dp)
-                            .size(56.dp)
-                    ) {
-                        Text(
-                            text = "+",
-                            fontSize = 24.sp,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    // Right side items
-                    items.takeLast(3).forEach { item ->
-                        NavBarItem(
-                            item = item,
-                            selected = currentRoute == item.route,
-                            onClick = {
-                                navController.navigate(item.route) {
-                                    launchSingleTop = true
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    restoreState = true
-                                }
-                            }
-                        )
-                    }
-                }
+                )
             }
         }
     ) { padding ->
@@ -147,8 +110,8 @@ fun AppNavHost(
             startDestination = "home",
             modifier = Modifier.padding(padding)
         ) {
-            composable("home") { UserDashboardScreen() }
-            composable("pantry") { UserDashboardScreen() }
+            composable("home")    { UserDashboardScreen() }
+            composable("pantry")  { UserDashboardScreen() }
             composable("recipes") { UserDashboardScreen() }
             composable("records") { UserDashboardScreen() }
 
@@ -172,17 +135,73 @@ fun AppNavHost(
                     onBack = { navController.popBackStack() }
                 )
             }
-            composable("favourites") {
-                // Member C's screen
-                UserDashboardScreen()
-            }
-            composable("shopping_list") {
-                // Member C's screen
-                UserDashboardScreen()
-            }
+            composable("favourites")    { UserDashboardScreen() }
+            composable("shopping_list") { UserDashboardScreen() }
             composable("add") {
-                CreateIngredientScreen(
-                    onBackClick = {  },{}
+                CreateIngredientScreen(onBackClick = { }, {})
+            }
+        }
+    }
+}
+
+@Composable
+private fun FloatingBottomBar(
+    items: List<BottomNavItem>,
+    currentRoute: String?,
+    onTabSelected: (String) -> Unit,
+    onAddClick: () -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        shape = RoundedCornerShape(26.dp),
+        color = scheme.onPrimary,
+        shadowElevation = 8.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .selectableGroup()
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val leftTabs  = items.take(2)
+            val rightTabs = items.takeLast(3)
+
+            leftTabs.forEach { item ->
+                NavBarTab(
+                    item = item,
+                    selected = currentRoute == item.route,
+                    onClick = { onTabSelected(item.route) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            FloatingActionButton(
+                onClick = onAddClick,
+                containerColor = scheme.onBackground,
+                contentColor = scheme.onPrimary,
+                shape = CircleShape,
+                modifier = Modifier
+                    .padding(horizontal = 6.dp)
+                    .size(52.dp)
+            ) {
+                Text(
+                    text = "+",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            rightTabs.forEach { item ->
+                NavBarTab(
+                    item = item,
+                    selected = currentRoute == item.route,
+                    onClick = { onTabSelected(item.route) },
+                    modifier = Modifier.weight(1f)
                 )
             }
         }
@@ -190,30 +209,65 @@ fun AppNavHost(
 }
 
 @Composable
-fun NavBarItem(
+private fun NavBarTab(
     item: BottomNavItem,
     selected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
+    val scheme = MaterialTheme.colorScheme
+    val tint = if (selected) scheme.primary else scheme.onSurfaceVariant
+
     Column(
+        modifier = modifier
+            .heightIn(min = 56.dp)
+            .selectable(
+                selected = selected,
+                role = Role.Tab,
+                onClick = onClick
+            ),
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .padding(horizontal = 4.dp)
-            .clickable { onClick() }
-            .padding(horizontal = 4.dp, vertical = 8.dp)
+        verticalArrangement = Arrangement.Center
     ) {
-        Icon(
-            imageVector = item.icon,
-            contentDescription = item.label,
-            tint = if (selected) PrimaryDark else MutedText,
-            modifier = Modifier.size(24.dp)
-        )
-        Spacer(modifier = Modifier.height(4.dp))
+        Box(
+            modifier = Modifier
+                .size(width = 44.dp, height = 30.dp)
+                .background(
+                    if (selected) scheme.primaryContainer else Color.Transparent,
+                    RoundedCornerShape(15.dp)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            OutlineIcon(item.iconPath, tint)
+        }
+
         Text(
             text = item.label,
-            fontSize = 12.sp,
-            color = if (selected) PrimaryDark else MutedText,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+            color = tint,
+            fontSize = 11.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1
         )
+    }
+}
+
+@Composable
+private fun OutlineIcon(iconPath: String, tint: Color) {
+    val path = remember(iconPath) {
+        PathParser().parsePathString(iconPath).toPath()
+    }
+
+    Canvas(modifier = Modifier.size(21.dp)) {
+        scale(size.width / 24f, size.height / 24f, pivot = center.copy(x = 0f, y = 0f)) {
+            drawPath(
+                path = path,
+                color = tint,
+                style = Stroke(
+                    width = 1.7f,
+                    cap = StrokeCap.Round,
+                    join = StrokeJoin.Round
+                )
+            )
+        }
     }
 }
