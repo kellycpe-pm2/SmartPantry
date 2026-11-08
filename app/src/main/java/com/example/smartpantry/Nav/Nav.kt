@@ -21,7 +21,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import androidx.navigation.NavGraph.Companion.findStartDestination
-import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -161,7 +160,6 @@ fun AppNavHost(
                     onMyFavourite = { navController.navigate("favourites") },
                     onShoppingList = { navController.navigate("shopping_list") },
                     onLogout = { /* TODO: sign out, then go to login */ },
-                    onDeleteAccount = { /* TODO */ }
                 )
             }
             composable("account_security") {

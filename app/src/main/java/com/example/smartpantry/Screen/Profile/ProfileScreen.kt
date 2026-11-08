@@ -11,7 +11,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Star
@@ -34,7 +33,6 @@ fun ProfileScreen(
     onMyFavourite: () -> Unit,
     onShoppingList: () -> Unit,
     onLogout: () -> Unit,
-    onDeleteAccount: () -> Unit
 ) {
     val isAdmin = profile.role == "admin"
 
@@ -62,7 +60,6 @@ fun ProfileScreen(
                 items(menu, key = { it.title }) { MenuRow(it); HorizontalDivider() }
             }
 
-            if (!isAdmin) DeleteRow(onDeleteAccount)
             Text(
                 "App version 1.0.0",
                 style = MaterialTheme.typography.bodySmall,
@@ -150,18 +147,6 @@ private fun MenuRow(item: MenuItem) {
     }
 }
 
-@Composable
-private fun DeleteRow(onClick: () -> Unit) {
-    Row(
-        Modifier.clickable(onClick = onClick).padding(vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(Icons.Filled.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-        Spacer(Modifier.width(12.dp))
-        Text("Delete Account", color = MaterialTheme.colorScheme.error)
-    }
-}
-
 // ---------- Previews (uses the colors from theme) ----------
 @Preview(showBackground = true, name = "User")
 @Composable
@@ -176,7 +161,7 @@ private fun UserPreview() {
             ),
             onChangePassword = {}, onAccountSecurity = {},
             onMyFavourite = {}, onShoppingList = {},
-            onLogout = {}, onDeleteAccount = {}
+            onLogout = {}
         )
     }
 }
@@ -193,7 +178,7 @@ private fun AdminPreview() {
             ),
             onChangePassword = {}, onAccountSecurity = {},
             onMyFavourite = {}, onShoppingList = {},
-            onLogout = {}, onDeleteAccount = {}
+            onLogout = {}
         )
     }
 }
