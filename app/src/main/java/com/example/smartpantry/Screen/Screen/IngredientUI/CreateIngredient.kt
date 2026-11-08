@@ -13,30 +13,40 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.smartpantry.model.Ingredient
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.smartpantry.ui.theme.ImageInput
 import com.example.smartpantry.ui.theme.OutlineDropdownField
 import com.example.smartpantry.ui.theme.OutlineTextField
+import com.example.smartpantry.viewmodel.ingredient_vm
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreateIngredientScreen(
     onBackClick: () -> Unit,
-    onCreateIngredient: (Ingredient) -> Unit
+    vm: ingredient_vm = viewModel(),
 ) {
-    var ingredientName by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf("") }
-    var quantityText by remember { mutableStateOf("") }
-    var unit by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
-    var imagePath by remember { mutableStateOf<String?>(null) }
-    var minExpiryDays by remember { mutableStateOf("") }
-    var maxExpiryDays by remember { mutableStateOf("") }
+    val state by vm.uiState.collectAsState()
+    val scheme = MaterialTheme.colorScheme
 
     val unitOptions = listOf("g", "kg", "ml", "L", "pcs", "tbsp", "tsp")
     val categoryOptions = listOf("Vegetable", "Fruit", "Meat", "Dairy", "Grain", "Spice", "Other")
 
-    val scheme = MaterialTheme.colorScheme
+    // Pop back once the insert succeeds
+    LaunchedEffect(state.saved) {
+        if (state.saved) onBackClick()
+    }
+
+    // Error dialog
+    state.error?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { vm.clearError() },
+            confirmButton = {
+                TextButton(onClick = { vm.clearError() }) { Text("OK") }
+            },
+            text = { Text(msg) },
+            title = { Text("Couldn't save") }
+        )
+    }
 
     Scaffold(
         containerColor = scheme.background,
@@ -45,18 +55,14 @@ fun CreateIngredientScreen(
                 title = {
                     Text(
                         text = "Create Ingredient",
-                        style = MaterialTheme.typography.headlineMedium,
+                        fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
                         color = scheme.primary
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowBack,
-                            contentDescription = "Back",
-                            tint = scheme.primary
-                        )
+                        Icon(Icons.Default.ArrowBack, "Back", tint = scheme.primary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -77,58 +83,50 @@ fun CreateIngredientScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Top
         ) {
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(Modifier.height(16.dp))
 
             ImageInput()
+            Spacer(Modifier.height(24.dp))
 
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // Ingredient name
             OutlineTextField(
-                value = ingredientName,
-                onValueChange = { ingredientName = it },
+                value = state.ingredientName,
+                onValueChange = vm::onNameChange,
                 label = "Ingredient Name",
                 image = Icons.Default.Inventory
             )
+            Spacer(Modifier.height(16.dp))
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Category dropdown
             OutlineDropdownField(
-                value = category,
-                onValueChange = { category = it },
+                value = state.category,
+                onValueChange = vm::onCategoryChange,
                 options = categoryOptions,
                 label = "Ingredient Category",
                 image = Icons.Default.Category
             )
+            Spacer(Modifier.height(16.dp))
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Quantity + Unit
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.Top
             ) {
                 OutlineTextField(
-                    value = quantityText,
-                    onValueChange = { quantityText = it },
+                    value = state.quantityText,
+                    onValueChange = vm::onQuantityChange,
                     label = "Weight",
                     image = Icons.Default.Scale,
                     modifier = Modifier.weight(0.60f),
                     supportingText = "*Quantity in a ingredient"
                 )
-
                 OutlineDropdownField(
-                    value = unit,
-                    onValueChange = { unit = it },
+                    value = state.unit,
+                    onValueChange = vm::onUnitChange,
                     options = unitOptions,
                     label = "Unit",
                     modifier = Modifier.weight(0.40f)
                 )
             }
-
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(Modifier.height(16.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -136,48 +134,43 @@ fun CreateIngredientScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.CalendarToday,
+                    Icons.Default.CalendarToday,
                     contentDescription = null,
                     tint = scheme.primary,
                     modifier = Modifier.size(20.dp)
                 )
-
                 Text(
                     text = "Expired Duration (Days)",
-                    color = scheme.primary,
+                    color = scheme.onBackground,
                     fontWeight = FontWeight.Medium
                 )
             }
+            Spacer(Modifier.height(8.dp))
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Min / Max fields below the title
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlineTextField(
-                    value = minExpiryDays,
-                    onValueChange = { minExpiryDays = it },
+                    value = state.minExpiryDays,
+                    onValueChange = vm::onMinExpiryChange,
                     label = "Min",
                     modifier = Modifier.weight(1f)
                 )
                 Text("-", color = scheme.onSurfaceVariant)
                 OutlineTextField(
-                    value = maxExpiryDays,
-                    onValueChange = { maxExpiryDays = it },
+                    value = state.maxExpiryDays,
+                    onValueChange = vm::onMaxExpiryChange,
                     label = "Max",
                     modifier = Modifier.weight(1f)
                 )
             }
+            Spacer(Modifier.height(16.dp))
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Description
             OutlineTextField(
-                value = description,
-                onValueChange = { description = it },
+                value = state.description,
+                onValueChange = vm::onDescriptionChange,
                 label = "Description",
                 image = Icons.Default.Description,
                 singleLine = false,
@@ -185,25 +178,11 @@ fun CreateIngredientScreen(
                 maxLines = 5
             )
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(Modifier.height(32.dp))
 
             Button(
-                onClick = {
-                    val newIngredient = Ingredient(
-                        ingredientName = ingredientName.trim(),
-                        category = category.takeIf { it.isNotEmpty() },
-                        weight = quantityText.toBigDecimalOrNull(),
-                        unit = unit.takeIf { it.isNotEmpty() },
-                        description = description.takeIf { it.isNotEmpty() },
-                        image = imagePath,
-                        minExpiredDuration = minExpiryDays.toShortOrNull(),
-                        maxExpiredDuration = maxExpiryDays.toShortOrNull(),
-                        createAt = System.currentTimeMillis(),
-                        updateAt = System.currentTimeMillis()
-                    )
-                    onCreateIngredient(newIngredient)
-                },
-                enabled = ingredientName.isNotBlank(),
+                onClick = vm::create,
+                enabled = state.canSubmit,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp),
@@ -213,14 +192,18 @@ fun CreateIngredientScreen(
                     contentColor = scheme.onPrimary
                 )
             ) {
-                Text(
-                    text = "Create",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                if (state.isSaving) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp),
+                        strokeWidth = 2.dp,
+                        color = scheme.onPrimary
+                    )
+                } else {
+                    Text("Create", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(Modifier.height(24.dp))
         }
     }
 }
