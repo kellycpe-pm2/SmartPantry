@@ -20,13 +20,13 @@ import com.example.smartpantry.hardware.rememberGalleryPicker
 import com.example.smartpantry.ui.theme.ImageInput
 import com.example.smartpantry.ui.theme.OutlineDropdownField
 import com.example.smartpantry.ui.theme.OutlineTextField
-import com.example.smartpantry.viewmodel.CreateIngredientViewModel
+import com.example.smartpantry.viewmodel.IngredientViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreateIngredientScreen(
     onBackClick: () -> Unit,
-    vm: CreateIngredientViewModel = viewModel(),
+    vm: IngredientViewModel = viewModel(),
 ) {
     val state by vm.uiState.collectAsState()
     val scheme = MaterialTheme.colorScheme

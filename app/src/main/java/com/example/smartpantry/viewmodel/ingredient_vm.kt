@@ -5,9 +5,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.smartpantry.model.Ingredient
 import com.example.smartpantry.storage.local.AppDatabase
-import com.example.smartpantry.storage.local.IngredientDao
 import com.example.smartpantry.storage.local.toEntity
+import com.example.smartpantry.storage.local.toModel
 import com.example.smartpantry.storage.remote.createIngredient
+import com.example.smartpantry.storage.remote.getIngredients
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,15 +31,29 @@ data class CreateIngredientUiState(
     val canSubmit: Boolean get() = ingredientName.isNotBlank() && !isSaving
 }
 
-class CreateIngredientViewModel(
-    app: Application,
-    private val dao: IngredientDao = AppDatabase.get(app).ingredientDao()
-) : AndroidViewModel(app) {
+class IngredientViewModel(app: Application) : AndroidViewModel(app) {
+
+    private val dao = AppDatabase.get(app).ingredientDao()
+
+    private val _ingredients = MutableStateFlow<List<Ingredient>>(emptyList())
+    val ingredients: StateFlow<List<Ingredient>> = _ingredients.asStateFlow()
 
     private val _uiState = MutableStateFlow(CreateIngredientUiState())
     val uiState: StateFlow<CreateIngredientUiState> = _uiState.asStateFlow()
 
-    // field updaters (unchanged)
+    init {
+        loadIngredients()
+    }
+
+    private fun loadIngredients() {
+        viewModelScope.launch {
+            dao.observeAll().collect { entities ->
+                _ingredients.value = entities.map { it.toModel() }
+            }
+        }
+    }
+
+    // ---- Field updaters ----
     fun onNameChange(v: String)        = _uiState.update { it.copy(ingredientName = v) }
     fun onCategoryChange(v: String)    = _uiState.update { it.copy(category = v) }
     fun onQuantityChange(v: String)    = _uiState.update { it.copy(quantityText = v) }
@@ -49,6 +64,10 @@ class CreateIngredientViewModel(
     fun onImagePicked(path: String?)   = _uiState.update { it.copy(imagePath = path) }
     fun clearError()                   = _uiState.update { it.copy(error = null) }
 
+    /** Call after success navigation so the screen doesn't pop twice. */
+    fun consumeSaved() = _uiState.update { it.copy(saved = false) }
+
+    // ---- Create ----
     fun create() {
         val s = _uiState.value
         if (s.ingredientName.isBlank() || s.isSaving) return
@@ -70,22 +89,44 @@ class CreateIngredientViewModel(
 
         viewModelScope.launch {
             try {
-                // 1. Save to local Room DB first (offline-first)
                 dao.insert(ingredient.toEntity())
-
-                // 2. Try to sync to Supabase
                 try {
                     createIngredient(ingredient)
                 } catch (remote: Exception) {
-                    // Local save succeeded; remote failed → keep it, retry later
                     android.util.Log.w("CreateIngredient", "Remote sync failed", remote)
                 }
-
-                _uiState.update { it.copy(isSaving = false, saved = true) }
+                _uiState.update {
+                    it.copy(
+                        isSaving = false,
+                        saved = true,
+                        ingredientName = "",
+                        category = "",
+                        quantityText = "",
+                        unit = "",
+                        description = "",
+                        imagePath = null,
+                        minExpiryDays = "",
+                        maxExpiryDays = ""
+                    )
+                }
             } catch (local: Exception) {
                 _uiState.update {
                     it.copy(isSaving = false, error = "Failed to save: ${local.message}")
                 }
+            }
+        }
+    }
+
+    // ---- Refresh ----
+    fun refreshIngredients() {
+        viewModelScope.launch {
+            try {
+                val remote = getIngredients()
+                dao.clear()
+                remote.forEach { dao.insert(it.toEntity()) }
+                android.util.Log.d("PantryRefresh", "Refreshed ${remote.size} rows")
+            } catch (e: Exception) {
+                android.util.Log.w("PantryRefresh", "Refresh failed: ${e.message}", e)
             }
         }
     }

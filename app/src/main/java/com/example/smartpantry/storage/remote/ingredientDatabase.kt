@@ -15,3 +15,10 @@ suspend fun createIngredient(ingredient: Ingredient): Ingredient =
             }
             .decodeSingle<Ingredient>()
     }
+suspend fun getIngredients(): List<Ingredient> =
+    withContext(Dispatchers.IO) {
+        supabase
+            .from("Ingredient")
+            .select()
+            .decodeList<Ingredient>()
+    }

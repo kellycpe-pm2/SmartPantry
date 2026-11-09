@@ -37,7 +37,9 @@ import com.example.smartpantry.Screen.Screen.IngredientUI.CreateIngredientScreen
 import com.example.smartpantry.Screen.Profile.AccountSecurityScreen
 import com.example.smartpantry.Screen.Profile.ProfileScreen
 import com.example.smartpantry.Screen.Profile.UserProfile
+import com.example.smartpantry.Screen.Screen.IngredientUI.PantryScreen
 import com.example.smartpantry.ui.home.UserDashboardScreen
+import com.example.smartpantry.viewmodel.IngredientViewModel
 
 data class BottomNavItem(
     val route: String,
@@ -86,6 +88,7 @@ fun AppNavHost(
     val currentRoute = backStackEntry?.destination?.route
 
     val bottomNavRoutes = listOf("home", "pantry", "recipes", "records", "profile")
+    val ingredientVm: IngredientViewModel = viewModel()
 
     LaunchedEffect(navController) {
         navController.currentBackStackEntryFlow.collect { entry ->
@@ -129,7 +132,7 @@ fun AppNavHost(
             modifier = Modifier.padding(padding)
         ) {
             composable("home")    { UserDashboardScreen() }
-            composable("pantry")  { UserDashboardScreen() }
+            composable("pantry")  { PantryScreen(ingredientVm) }
             composable("recipes") { UserDashboardScreen() }
             composable("records") { UserDashboardScreen() }
 
@@ -167,7 +170,7 @@ fun AppNavHost(
                                 navController.popBackStack(route = "add", inclusive = true)
                             }
                         }
-                    },
+                    },ingredientVm
                 )
             }
         }
