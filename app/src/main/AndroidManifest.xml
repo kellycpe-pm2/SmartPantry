@@ -16,7 +16,6 @@
     <!-- Re-register alarms after device reboot [citation:4] -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <uses-permission android:name="android.permission.CAMERA" />
 
 
     <application

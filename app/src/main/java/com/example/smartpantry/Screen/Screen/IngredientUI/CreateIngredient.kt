@@ -1,5 +1,6 @@
 package com.example.smartpantry.Screen.Screen.IngredientUI
 
+import android.net.Uri
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -14,6 +15,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.smartpantry.hardware.rememberCameraCapture
+import com.example.smartpantry.hardware.rememberGalleryPicker
 import com.example.smartpantry.ui.theme.ImageInput
 import com.example.smartpantry.ui.theme.OutlineDropdownField
 import com.example.smartpantry.ui.theme.OutlineTextField
@@ -31,7 +34,6 @@ fun CreateIngredientScreen(
     val unitOptions = listOf("g", "kg", "ml", "L", "pcs", "tbsp", "tsp")
     val categoryOptions = listOf("Vegetable", "Fruit", "Meat", "Dairy", "Grain", "Spice", "Other")
 
-    // Pop back once the insert succeeds
     LaunchedEffect(state.saved) {
         if (state.saved) onBackClick()
     }
@@ -85,7 +87,55 @@ fun CreateIngredientScreen(
         ) {
             Spacer(Modifier.height(16.dp))
 
-            ImageInput()
+            var pickedUri by remember { mutableStateOf<Uri?>(null) }
+            var showSourceDialog by remember { mutableStateOf(false) }
+
+            val openCamera = rememberCameraCapture { uri ->
+                pickedUri = uri
+                vm.onImagePicked(uri.toString())
+            }
+
+            val openGallery = rememberGalleryPicker { uri ->
+                pickedUri = uri
+                vm.onImagePicked(uri.toString())
+            }
+
+
+            Spacer(Modifier.height(16.dp))
+
+            ImageInput(
+                imagePath = pickedUri?.toString() ?: state.imagePath,
+                onClick = { showSourceDialog = true }       // opens chooser
+            )
+
+
+
+            if (showSourceDialog) {
+                AlertDialog(
+                    onDismissRequest = { showSourceDialog = false },
+                    title = { Text(if (pickedUri == null) "Add image" else "Replace image") },
+                    text = {
+                        Column {
+                            TextButton(onClick = {
+                                showSourceDialog = false
+                                openCamera()
+                            }) { Text("Take a photo") }
+
+                            TextButton(onClick = {
+                                showSourceDialog = false
+                                openGallery()
+                            }) { Text("Choose from gallery") }
+                        }
+                    },
+                    confirmButton = {},
+                    dismissButton = {
+                        TextButton(onClick = { showSourceDialog = false }) { Text("Cancel") }
+                    }
+                )
+            }
+
+
+
             Spacer(Modifier.height(24.dp))
 
             OutlineTextField(
