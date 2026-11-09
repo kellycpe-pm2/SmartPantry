@@ -18,7 +18,7 @@ suspend fun createIngredient(ingredient: Ingredient): Ingredient =
 suspend fun getIngredients(): List<Ingredient> =
     withContext(Dispatchers.IO) {
         supabase
-            .from("Ingredient")
+            .from("ingredient")
             .select()
             .decodeList<Ingredient>()
     }

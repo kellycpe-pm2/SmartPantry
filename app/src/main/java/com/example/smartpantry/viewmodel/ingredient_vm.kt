@@ -1,7 +1,10 @@
 package com.example.smartpantry.viewmodel
 
 import android.app.Application
+import android.content.ContentValues.TAG
 import android.net.Uri
+import android.util.Log
+import android.util.Log.d
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.smartpantry.model.Ingredient
@@ -138,28 +141,30 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // ✅ FIX: The refresh function you requested
     fun refreshIngredients(force: Boolean = false) {
         val now = System.currentTimeMillis()
-
-        // Don't auto-sync if it's been less than 5 minutes (unless forced)
-        if (!force && (now - lastSyncTime) < syncIntervalMs) return
+        if (!force && (now - lastSyncTime) < syncIntervalMs) {
+            d(TAG, "Skipped — throttled (5 min)")
+            return
+        }
         if (_isRefreshing.value) return
 
         _isRefreshing.value = true
-
         viewModelScope.launch {
             try {
-                // 1. Fetch from Supabase
+                d(TAG, "→ Calling getIngredients()")
                 val remote = getIngredients()
+                d(TAG, "← Received ${remote.size} rows from Supabase")
 
-                // 2. Overwrite the local Room DB
-                dao.replaceAll(remote.map { it.toEntity() })
-
+                if (remote.isNotEmpty()) {
+                    dao.insertAll(remote.map { it.toEntity() })
+                    d(TAG, "✅ Merged ${remote.size} rows into Room")
+                } else {
+                    Log.w(TAG, "⚠ Empty remote — local data untouched")
+                }
                 lastSyncTime = System.currentTimeMillis()
-                android.util.Log.d("PantrySync", "Successfully pulled ${remote.size} items from remote")
             } catch (e: Exception) {
-                android.util.Log.w("PantrySync", "Refresh failed: ${e.message}", e)
+                Log.e(TAG, "❌ Refresh failed", e)
             } finally {
                 _isRefreshing.value = false
             }
