@@ -35,7 +35,10 @@ fun CreateIngredientScreen(
     val categoryOptions = listOf("Vegetable", "Fruit", "Meat", "Dairy", "Grain", "Spice", "Other")
 
     LaunchedEffect(state.saved) {
-        if (state.saved) onBackClick()
+        if (state.saved) {
+            vm.consumeSaved()
+            onBackClick()
+        }
     }
 
     // Error dialog
