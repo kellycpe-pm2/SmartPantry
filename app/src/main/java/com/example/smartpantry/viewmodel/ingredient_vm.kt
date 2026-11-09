@@ -9,9 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.math.BigDecimal
 
-/** UI state for the Create Ingredient screen. */
 data class CreateIngredientUiState(
     val ingredientName: String = "",
     val category: String = "",
@@ -25,53 +23,52 @@ data class CreateIngredientUiState(
     val error: String? = null,
     val saved: Boolean = false,
 ) {
-    val canSubmit: Boolean
-        get() = ingredientName.isNotBlank() && !isSaving
+    val canSubmit: Boolean get() = ingredientName.isNotBlank() && !isSaving
 }
 
-class ingredient_vm : ViewModel() {
+class CreateIngredientViewModel : ViewModel() {
 
     private val _uiState = MutableStateFlow(CreateIngredientUiState())
     val uiState: StateFlow<CreateIngredientUiState> = _uiState.asStateFlow()
 
-    // --- field updaters ---
-    fun onNameChange(v: String)          = _uiState.update { it.copy(ingredientName = v) }
-    fun onCategoryChange(v: String)      = _uiState.update { it.copy(category = v) }
-    fun onQuantityChange(v: String)      = _uiState.update { it.copy(quantityText = v) }
-    fun onUnitChange(v: String)          = _uiState.update { it.copy(unit = v) }
-    fun onDescriptionChange(v: String)   = _uiState.update { it.copy(description = v) }
-    fun onMinExpiryChange(v: String)     = _uiState.update { it.copy(minExpiryDays = v) }
-    fun onMaxExpiryChange(v: String)     = _uiState.update { it.copy(maxExpiryDays = v) }
-    fun onImagePicked(path: String?)     = _uiState.update { it.copy(imagePath = path) }
-
-    fun clearError() = _uiState.update { it.copy(error = null) }
+    fun onNameChange(v: String)        = _uiState.update { it.copy(ingredientName = v) }
+    fun onCategoryChange(v: String)    = _uiState.update { it.copy(category = v) }
+    fun onQuantityChange(v: String)    = _uiState.update { it.copy(quantityText = v) }
+    fun onUnitChange(v: String)        = _uiState.update { it.copy(unit = v) }
+    fun onDescriptionChange(v: String) = _uiState.update { it.copy(description = v) }
+    fun onMinExpiryChange(v: String)   = _uiState.update { it.copy(minExpiryDays = v) }
+    fun onMaxExpiryChange(v: String)   = _uiState.update { it.copy(maxExpiryDays = v) }
+    fun onImagePicked(path: String?)   = _uiState.update { it.copy(imagePath = path) }
+    fun clearError()                   = _uiState.update { it.copy(error = null) }
 
     fun create() {
         val s = _uiState.value
-        if (!s.canSubmit) return
-
-        val newIngredient = Ingredient(
-            ingredientName = s.ingredientName.trim(),
-            category = s.category.takeIf { it.isNotEmpty() },
-            weight = s.quantityText.toDoubleOrNull() as BigDecimal? as Double?,
-            unit = s.unit.takeIf { it.isNotEmpty() },
-            description = s.description.takeIf { it.isNotEmpty() },
-            image = s.imagePath,
-            minExpiredDuration = s.minExpiryDays.toShortOrNull(),
-            maxExpiredDuration = s.maxExpiryDays.toShortOrNull(),
-            createAt = System.currentTimeMillis(),
-            updateAt = System.currentTimeMillis()
-        )
+        if (s.ingredientName.isBlank() || s.isSaving) return
 
         _uiState.update { it.copy(isSaving = true, error = null) }
 
         viewModelScope.launch {
             try {
-                createIngredient(newIngredient)
+                val created = createIngredient(
+                    Ingredient(
+                        ingredientName = s.ingredientName.trim(),
+                        category = s.category.takeIf { it.isNotEmpty() },
+                        weight = s.quantityText.toDoubleOrNull(),
+                        unit = s.unit.takeIf { it.isNotEmpty() },
+                        description = s.description.takeIf { it.isNotEmpty() },
+                        image = s.imagePath,
+                        minExpiredDuration = s.minExpiryDays.toShortOrNull(),
+                        maxExpiredDuration = s.maxExpiryDays.toShortOrNull(),
+                        createAt = System.currentTimeMillis(),
+                        updateAt = System.currentTimeMillis()
+                    )
+                )
+                android.util.Log.d("Ingredient", "Inserted id=${created.ingredientId}")
                 _uiState.update { it.copy(isSaving = false, saved = true) }
             } catch (e: Exception) {
+                android.util.Log.e("Ingredient", "Insert failed", e)
                 _uiState.update {
-                    it.copy(isSaving = false, error = e.message ?: "Failed to save ingredient")
+                    it.copy(isSaving = false, error = e.message ?: "Failed to save")
                 }
             }
         }

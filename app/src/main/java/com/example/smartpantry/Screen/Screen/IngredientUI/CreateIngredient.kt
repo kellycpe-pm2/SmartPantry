@@ -17,13 +17,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.smartpantry.ui.theme.ImageInput
 import com.example.smartpantry.ui.theme.OutlineDropdownField
 import com.example.smartpantry.ui.theme.OutlineTextField
-import com.example.smartpantry.viewmodel.ingredient_vm
+import com.example.smartpantry.viewmodel.CreateIngredientViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreateIngredientScreen(
     onBackClick: () -> Unit,
-    vm: ingredient_vm = viewModel(),
+    vm: CreateIngredientViewModel = viewModel(),
 ) {
     val state by vm.uiState.collectAsState()
     val scheme = MaterialTheme.colorScheme

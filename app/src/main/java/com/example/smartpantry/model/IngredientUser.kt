@@ -9,7 +9,7 @@ data class IngredientUser(
     val createdAt: Long = System.currentTimeMillis(),
     val userId: Long,
     val ingredientId: Long,
-    val quantity: BigDecimal? = null,
+    val quantity: Double? = null,
     val quantityUnit: String? = null,
     val locationStorage: String? = null,
     val expiredDate: Long

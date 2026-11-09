@@ -8,6 +8,6 @@ data class RecipeIngredient(
     val recipeIngredientId: Long? = null,
     val ingredientId: Long,
     val recipeId: Long? = null,
-    val quantity: BigDecimal? = null,
+    val quantity: Double? = null,
     val unit: String? = null
 )

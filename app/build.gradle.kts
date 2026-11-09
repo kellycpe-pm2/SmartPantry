@@ -1,6 +1,8 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    kotlin("plugin.serialization") version "2.0.21"
+
 }
 
 android {
@@ -66,8 +68,11 @@ dependencies {
         implementation("androidx.compose.ui:ui-tooling-preview")
         implementation("androidx.compose.material3:material3")
         //Supabase Kotlin client (BOM manages all module versions)
-    implementation(platform("io.github.jan-tennert.supabase:bom:3.5.0"))
-    implementation("io.github.jan-tennert.supabase:postgrest-kt")
+        implementation(platform("io.github.jan-tennert.supabase:bom:3.6.0"))
+        implementation("io.github.jan-tennert.supabase:postgrest-kt")
+        implementation("io.github.jan-tennert.supabase:auth-kt")
+        implementation("io.github.jan-tennert.supabase:realtime-kt")
+        implementation("io.ktor:ktor-client-android:3.5.2")
 // HTTP engine required by supabase-kt
     implementation("io.ktor:ktor-client-android:3.0.3")
 // Coroutines
