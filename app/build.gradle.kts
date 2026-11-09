@@ -3,7 +3,6 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     kotlin("plugin.serialization") version "2.0.21"
     id("com.google.devtools.ksp")
-
 }
 
 android {
@@ -99,6 +98,8 @@ dependencies {
     //Setup Room for support SQLite
     implementation("androidx.room:room-runtime:2.7.0-alpha11")
     implementation("androidx.room:room-ktx:2.7.0-alpha11")
-    ksp("androidx.room:room-compiler:2.5.0")
+
+
+    ksp("androidx.room:room-compiler:2.7.0-alpha11")
 
 }
