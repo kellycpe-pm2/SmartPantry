@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,6 +23,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -33,10 +35,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.smartpantry.R
 import com.example.smartpantry.Screen.Screen.IngredientUI.CreateIngredientScreen
 import com.example.smartpantry.Screen.Profile.AccountSecurityScreen
 import com.example.smartpantry.Screen.Profile.ProfileScreen
-import com.example.smartpantry.Screen.Profile.UserProfile
+import com.example.smartpantry.Screen.Profile.ProfileViewModel
 import com.example.smartpantry.Screen.Screen.IngredientUI.PantryScreen
 import com.example.smartpantry.ui.home.UserDashboardScreen
 import com.example.smartpantry.viewmodel.IngredientViewModel
@@ -53,36 +56,30 @@ fun AppNavHost(
 ) {
     val items = listOf(
         BottomNavItem(
-            "home", "Home",
+            "home", stringResource(R.string.nav_home),
             "M3 10 L12 3 L21 10 M5 9 V21 H10 V15 H14 V21 H19 V9"
         ),
         BottomNavItem(
-            "pantry", "Pantry",
+            "pantry", stringResource(R.string.nav_pantry),
             "M7 3 H17 V6 H7 Z M8 6 L5 10 V19 Q5 21 7 21 H17 Q19 21 19 19 V10 L16 6 M5 12 H19"
         ),
         BottomNavItem(
-            "recipes", "Recipes",
+            "recipes", stringResource(R.string.nav_recipes),
             "M7 14 C2 14 2 7 7 7 C8 2 16 2 17 7 C22 7 22 14 17 14 V21 H7 Z M7 17 H17"
         ),
         BottomNavItem(
-            "records", "Record",
+            "records", stringResource(R.string.nav_log),
             "M5 20 V14 M10 20 V10 M15 20 V6 M20 20 V3"
         ),
         BottomNavItem(
-            "profile", "Profile",
+            "profile", stringResource(R.string.nav_profile),
             "M16 8 A4 4 0 1 1 8 8 A4 4 0 1 1 16 8 M4 21 C4 13 20 13 20 21"
         )
     )
 
-    // temporary, will change it to real user in the future
-    val profile = remember {
-        UserProfile(
-            displayName = "Maya Patel", email = "maya.patel@gmail.com",
-            phoneNo = "0123456789",
-            role = "user", memberSince = "September 2026",
-            gender = "Female", dateOfBirth = "2000-05-21"
-        )
-    }
+    // The logged-in user's profile, loaded from Supabase (null while loading)
+    val profileViewModel: ProfileViewModel = viewModel()
+    val profile by profileViewModel.profile.collectAsState()
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -137,24 +134,35 @@ fun AppNavHost(
             composable("records") { UserDashboardScreen() }
 
             composable("profile") {
-                ProfileScreen(
-                    profile = profile,
-                    onChangePassword = { /* TODO: admin change password screen */ },
-                    onAccountSecurity = { navController.navigate("account_security") },
-                    onMyFavourite = { navController.navigate("favourites") },
-                    onShoppingList = { navController.navigate("shopping_list") },
-                    onLogout = { /* TODO: sign out, then go to login */ },
-                )
+                val p = profile
+                if (p == null) {
+                    LoadingBox()
+                } else {
+                    ProfileScreen(
+                        profile = p,
+                        onChangePassword = { /* TODO */ },
+                        onAccountSecurity = { navController.navigate("account_security") },
+                        onMyFavourite = { navController.navigate("favourites") },
+                        onShoppingList = { navController.navigate("shopping_list") },
+                        onLogout = { profileViewModel.logout() }
+                    )
+                }
             }
+
             composable("account_security") {
-                AccountSecurityScreen(
-                    profile = profile,
-                    onSave = { /* TODO: save to backend */ },
-                    onChangeEmail = { newEmail -> /* TODO: Supabase */ },
-                    onChangePassword = { /* TODO: change password screen */ },
-                    onDeleteAccount = { /* TODO: delete account, then go to login */ },
-                    onBack = { navController.popBackStack() }
-                )
+                val p = profile
+                if (p == null) {
+                    LoadingBox()
+                } else {
+                    AccountSecurityScreen(
+                        profile = p,
+                        onSave = { profileViewModel.save(it) },
+                        onChangeEmail = { newEmail -> profileViewModel.changeEmail(newEmail) },
+                        onChangePassword = { /* TODO: change password screen */ },
+                        onDeleteAccount = { /* TODO: needs a server-side step */ },
+                        onBack = { navController.popBackStack() }
+                    )
+                }
             }
             composable("favourites")    { UserDashboardScreen() }
             composable("shopping_list") { UserDashboardScreen() }
@@ -174,6 +182,13 @@ fun AppNavHost(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun LoadingBox() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator()
     }
 }
 

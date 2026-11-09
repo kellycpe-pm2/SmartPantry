@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Save as app/src/main/res/values-ms/strings.xml (Bahasa Malaysia) -->
+<resources>
+    <!-- Bottom navigation -->
+    <string name="nav_home">Utama</string>
+    <string name="nav_pantry">Pantri</string>
+    <string name="nav_recipes">Resipi</string>
+    <string name="nav_log">Rekod</string>
+    <string name="nav_profile">Profil</string>
+
+    <!-- Profile screen -->
+    <string name="profile_title">Profil Saya</string>
+    <string name="menu_account_security">Akaun &amp; Keselamatan</string>
+    <string name="menu_favourite">Kegemaran Saya</string>
+    <string name="menu_shopping_list">Senarai Belian</string>
+    <string name="menu_change_password">Tukar Kata Laluan</string>
+    <string name="menu_logout">Log Keluar</string>
+    <string name="menu_delete_account">Padam Akaun</string>
+    <string name="app_version">Versi aplikasi %1$s</string>
+    <string name="member_since">Ahli sejak %1$s</string>
+    <string name="details_admin">Butiran pentadbir</string>
+    <string name="details_personal">Butiran peribadi</string>
+
+    <!-- Account &amp; Security screen -->
+    <string name="section_profile">Profil</string>
+    <string name="section_security">Keselamatan</string>
+    <string name="delete_dialog_title">Padam akaun?</string>
+    <string name="delete_dialog_message">Ini akan memadam akaun dan data peribadi anda secara kekal. Tindakan ini tidak boleh dibatalkan.</string>
+    <string name="email_note">Kami akan menghantar pautan pengesahan ke e-mel baharu.</string>
+
+    <!-- Fields -->
+    <string name="field_name">Nama</string>
+    <string name="field_gender">Jantina</string>
+    <string name="field_dob">Tarikh lahir</string>
+    <string name="field_phone">Telefon</string>
+    <string name="field_email">E-mel</string>
+    <string name="field_language">Bahasa</string>
+    <string name="field_role">Peranan</string>
+    <string name="role_admin">Pentadbir</string>
+    <string name="not_set">Belum ditetapkan</string>
+    <string name="gender_female">Perempuan</string>
+    <string name="gender_male">Lelaki</string>
+    <string name="gender_none">Tidak mahu nyatakan</string>
+
+    <!-- Validation errors -->
+    <string name="error_name">Nama mesti 3 hingga 20 aksara</string>
+    <string name="error_phone">Nombor telefon mesti 9 hingga 11 digit</string>
+    <string name="error_email">Masukkan e-mel yang sah</string>
+    <string name="error_dob_format">Gunakan format yyyy-MM-dd</string>
+    <string name="error_dob_invalid">Tarikh tidak sah</string>
+    <string name="error_dob_future">Tarikh tidak boleh pada masa hadapan</string>
+
+    <!-- Common -->
+    <string name="back">Kembali</string>
+    <string name="save">Simpan</string>
+    <string name="cancel">Batal</string>
+    <string name="delete">Padam</string>
+</resources>

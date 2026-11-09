@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.smartpantry.model.UserProfile
 import com.example.smartpantry.ui.theme.SmartPantryTheme
 
 @Composable
@@ -147,6 +148,7 @@ private fun MenuRow(item: MenuItem) {
     }
 }
 
+/*
 // ---------- Previews (uses the colors from theme) ----------
 @Preview(showBackground = true, name = "User")
 @Composable
@@ -154,6 +156,7 @@ private fun UserPreview() {
     SmartPantryTheme {
         ProfileScreen(
             profile = UserProfile(
+                userCode = "SP01001",
                 displayName = "Maya Patel", email = "maya.patel@gmail.com",
                 phoneNo = "0123456789",
                 role = "user", memberSince = "September 2026",
@@ -172,6 +175,7 @@ private fun AdminPreview() {
     SmartPantryTheme {
         ProfileScreen(
             profile = UserProfile(
+                userCode = "SP01001",
                 displayName = "Admin", email = "admin@gmail.com",
                 phoneNo = "0198765432",
                 role = "admin", memberSince = "September 2026"
@@ -182,3 +186,5 @@ private fun AdminPreview() {
         )
     }
 }
+
+ */

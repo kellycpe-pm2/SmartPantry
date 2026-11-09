@@ -19,6 +19,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.example.smartpantry.model.UserProfile
 import com.example.smartpantry.ui.theme.SmartPantryTheme
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -293,6 +294,7 @@ private fun dobError(input: String): String? {
     return if (date.after(Date())) "Date cannot be in the future" else null
 }
 
+/*
 // ---------- Previews (YOUR theme, light + dark) ----------
 @Preview(showBackground = true, name = "Light")
 @Composable
@@ -314,6 +316,7 @@ private fun AccountSecurityDarkPreview() {
 private fun AccountSecurityPreviewContent() {
     AccountSecurityScreen(
         profile = UserProfile(
+            userCode = "SP01001",
             displayName = "Maya Patel", email = "maya.patel@email.com",
             phoneNo = "0123456789",
             role = "user", memberSince = "September 2026",
@@ -322,3 +325,4 @@ private fun AccountSecurityPreviewContent() {
         onSave = {}, onChangeEmail = {}, onChangePassword = {}, onDeleteAccount = {}, onBack = {}
     )
 }
+ */

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Save as app/src/main/res/values-zh/strings.xml (Simplified Chinese) -->
+<resources>
+    <!-- Bottom navigation -->
+    <string name="nav_home">首页</string>
+    <string name="nav_pantry">食材库</string>
+    <string name="nav_recipes">食谱</string>
+    <string name="nav_log">记录</string>
+    <string name="nav_profile">我的</string>
+
+    <!-- Profile screen -->
+    <string name="profile_title">我的资料</string>
+    <string name="menu_account_security">账户与安全</string>
+    <string name="menu_favourite">我的收藏</string>
+    <string name="menu_shopping_list">购物清单</string>
+    <string name="menu_change_password">修改密码</string>
+    <string name="menu_logout">退出登录</string>
+    <string name="menu_delete_account">删除账户</string>
+    <string name="app_version">应用版本 %1$s</string>
+    <string name="member_since">注册于 %1$s</string>
+    <string name="details_admin">管理员信息</string>
+    <string name="details_personal">个人信息</string>
+
+    <!-- Account &amp; Security screen -->
+    <string name="section_profile">个人资料</string>
+    <string name="section_security">安全</string>
+    <string name="delete_dialog_title">删除账户？</string>
+    <string name="delete_dialog_message">这将永久删除您的账户和个人数据，且无法撤销。</string>
+    <string name="email_note">我们会向新邮箱发送确认链接。</string>
+
+    <!-- Fields -->
+    <string name="field_name">姓名</string>
+    <string name="field_gender">性别</string>
+    <string name="field_dob">出生日期</string>
+    <string name="field_phone">电话</string>
+    <string name="field_email">电子邮件</string>
+    <string name="field_language">语言</string>
+    <string name="field_role">角色</string>
+    <string name="role_admin">管理员</string>
+    <string name="not_set">未设置</string>
+    <string name="gender_female">女</string>
+    <string name="gender_male">男</string>
+    <string name="gender_none">不愿透露</string>
+
+    <!-- Validation errors -->
+    <string name="error_name">姓名需为 3 到 20 个字符</string>
+    <string name="error_phone">电话号码需为 9 到 11 位数字</string>
+    <string name="error_email">请输入有效的电子邮件</string>
+    <string name="error_dob_format">请使用格式 yyyy-MM-dd</string>
+    <string name="error_dob_invalid">日期无效</string>
+    <string name="error_dob_future">日期不能晚于今天</string>
+
+    <!-- Common -->
+    <string name="back">返回</string>
+    <string name="save">保存</string>
+    <string name="cancel">取消</string>
+    <string name="delete">删除</string>
+</resources>
