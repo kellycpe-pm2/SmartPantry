@@ -35,13 +35,27 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.activity.compose.BackHandler
+import androidx.compose.material3.Checkbox
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 
 
-private val PageWhite = Color(0xFFFCFEFE)
-private val DeepTeal = Color(0xFF176F6C)
-private val Ink = Color(0xFF17383A)
-private val Muted = Color(0xFF53696B)
-private val SelectedCyan = Color(0xFFD8F4F4)
+private val PageWhite: Color
+    @Composable get() = MaterialTheme.colorScheme.background
+
+private val DeepTeal: Color
+    @Composable get() = MaterialTheme.colorScheme.primary
+
+private val Ink: Color
+    @Composable get() = MaterialTheme.colorScheme.onBackground
+
+private val Muted: Color
+    @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
+
+private val SelectedCyan: Color
+    @Composable get() = MaterialTheme.colorScheme.secondaryContainer
 
 private enum class MainTab(val label: String, val iconPath: String) {
     HOME("Home", "M3 10 L12 3 L21 10 M5 9 V21 H10 V15 H14 V21 H19 V9"),
@@ -70,6 +84,19 @@ fun SmartPantryApp() {
 private fun MainScreen() {
     var selectedTab by rememberSaveable { mutableStateOf(MainTab.HOME) }
 
+    // 记住 Shopping List 有没有打开。关闭后会回到原来的 Tab。
+    var showShoppingList by rememberSaveable { mutableStateOf(false) }
+
+// 手机的返回键和页面上的 Back 按钮执行同一个动作。
+    BackHandler(enabled = showShoppingList) {
+        showShoppingList = false
+    }
+
+    if (showShoppingList) {
+        ShoppingListScreen(onBack = { showShoppingList = false })
+        return
+    }
+
     Scaffold(
         containerColor = PageWhite,
         bottomBar = {
@@ -88,7 +115,10 @@ private fun MainScreen() {
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             if (selectedTab == MainTab.HOME) {
-                HomeContent(onOpenTab = { selectedTab = it })
+                HomeContent(
+                    onOpenTab = { selectedTab = it },
+                    onOpenShoppingList = { showShoppingList = true }
+                )
             } else {
                 Text(
                     text = selectedTab.label,
@@ -111,7 +141,7 @@ private fun FloatingBottomBar(
             .navigationBarsPadding()
             .padding(horizontal = 16.dp, vertical = 10.dp),
         shape = RoundedCornerShape(26.dp),
-        color = Color.White,
+        color = MaterialTheme.colorScheme.surface,
         shadowElevation = 8.dp
     ) {
         Row(
@@ -190,7 +220,10 @@ private fun OutlineIcon(iconPath: String, tint: Color) {
 }
 
 @Composable
-private fun HomeContent(onOpenTab: (MainTab) -> Unit) {
+private fun HomeContent(
+    onOpenTab: (MainTab) -> Unit,
+    onOpenShoppingList: () -> Unit
+) {
     // 首页顶部只放品牌和问候，把空间留给实际内容。
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(
@@ -239,7 +272,7 @@ private fun HomeContent(onOpenTab: (MainTab) -> Unit) {
             .clip(RoundedCornerShape(22.dp))
             .background(
                 Brush.horizontalGradient(
-                    listOf(Color(0xFFEFFBFB), Color(0xFFCCEFEF))
+                    listOf(MaterialTheme.colorScheme.surfaceContainerLow, MaterialTheme.colorScheme.secondaryContainer)
                 )
             )
     ) {
@@ -286,7 +319,7 @@ private fun HomeContent(onOpenTab: (MainTab) -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(Color(0xFFF0F8F8))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
             .clickable(onClickLabel = "Open pantry") {
                 onOpenTab(MainTab.PANTRY)
             }
@@ -315,7 +348,7 @@ private fun HomeContent(onOpenTab: (MainTab) -> Unit) {
         CompactExpiryRow("Eggs", "6 pcs · Expires tomorrow", R.drawable.home_eggs) {
             onOpenTab(MainTab.PANTRY)
         }
-        HorizontalDivider(color = Color(0xFFDCEAEA))
+        HorizontalDivider(color = 	MaterialTheme.colorScheme.outlineVariant)
         CompactExpiryRow("Tomatoes", "3 pcs · Expires in 2 days", R.drawable.home_tomatoes) {
             onOpenTab(MainTab.PANTRY)
         }
@@ -332,11 +365,16 @@ private fun HomeContent(onOpenTab: (MainTab) -> Unit) {
         HomeShortcut("Food log", MainTab.LOG, onOpenTab)
     }
 
-    // 购物摘要暂时显示示例数量，等 Shopping List 完成后再接入。
+    // 首页卡片发出点击事件，由 MainScreen 决定打开哪个页面。
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFFF0F8F8), RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .clickable(
+                onClickLabel = "Open shopping list",
+                onClick = onOpenShoppingList
+            )
             .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -372,7 +410,7 @@ private fun HomeContent(onOpenTab: (MainTab) -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(14.dp))
-                .background(Color(0xFFF0F8F8))
+                .background(MaterialTheme.colorScheme.surfaceContainerLow)
                 .clickable(onClickLabel = "Open recipes") {
                     onOpenTab(MainTab.RECIPES)
                 }
@@ -466,5 +504,52 @@ private fun HomeShortcut(
             TabIcon(tab, DeepTeal)
         }
         Text(label, fontSize = 12.sp, color = Ink)
+    }
+}
+
+@Composable
+private fun ShoppingItemRow(
+    name: String,
+    initialQuantity: Int,
+    unit: String
+) {
+    // 每一行各自记住当前数量和已购状态。
+    var quantity by rememberSaveable { mutableStateOf(initialQuantity) }
+    var purchased by rememberSaveable { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(
+            checked = purchased,
+            onCheckedChange = { purchased = it },
+            modifier = Modifier.semantics {
+                contentDescription = "Purchased: $name"
+            }
+        )
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(name, color = MaterialTheme.colorScheme.onBackground)
+            Text(
+                "$quantity $unit",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        // 数量最低为 1。标记已购后，先取消勾选才能改数量。
+        TextButton(
+            onClick = { quantity-- },
+            enabled = quantity > 1 && !purchased
+        ) {
+            Text("−")
+        }
+
+        TextButton(
+            onClick = { quantity++ },
+            enabled = !purchased
+        ) {
+            Text("+")
+        }
     }
 }
