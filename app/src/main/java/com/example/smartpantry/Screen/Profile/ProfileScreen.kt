@@ -21,14 +21,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.example.smartpantry.model.UserProfile
-import com.example.smartpantry.ui.theme.SmartPantryTheme
+import com.example.smartpantry.model.User
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 @Composable
 fun ProfileScreen(
-    profile: UserProfile,
+    profile: User,
     onChangePassword: () -> Unit,
     onAccountSecurity: () -> Unit,
     onMyFavourite: () -> Unit,
@@ -75,7 +75,7 @@ fun ProfileScreen(
 private data class MenuItem(val icon: ImageVector, val title: String, val onClick: () -> Unit)
 
 @Composable
-private fun Header(profile: UserProfile) {
+private fun Header(profile: User) {
     Column(
         Modifier.fillMaxWidth().padding(vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -94,7 +94,7 @@ private fun Header(profile: UserProfile) {
         Text(profile.displayName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         Text(profile.email, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(
-            "Member since ${profile.memberSince}",
+            "Member since ${formatMemberSince(profile.memberSince)}",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -102,7 +102,7 @@ private fun Header(profile: UserProfile) {
 }
 
 @Composable
-private fun DetailsCard(profile: UserProfile) {
+private fun DetailsCard(profile: User) {
     val isAdmin = profile.role == "admin"
     Card(
         Modifier.fillMaxWidth(),
@@ -116,7 +116,7 @@ private fun DetailsCard(profile: UserProfile) {
             if (isAdmin) {
                 InfoRow("Role", "Admin")
             } else {
-                InfoRow("Gender", profile.gender ?: "Not set")
+                InfoRow("Household size", profile.householdSize?.toString() ?: "Not set")
                 InfoRow("Date of birth", profile.dateOfBirth ?: "Not set")
             }
         }
@@ -148,6 +148,12 @@ private fun MenuRow(item: MenuItem) {
     }
 }
 
+private fun formatMemberSince(raw: String): String =
+    runCatching {
+        val parsed = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(raw.take(10))!!
+        SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(parsed)
+    }.getOrDefault(raw)
+
 /*
 // ---------- Previews (uses the colors from theme) ----------
 @Preview(showBackground = true, name = "User")
@@ -155,7 +161,7 @@ private fun MenuRow(item: MenuItem) {
 private fun UserPreview() {
     SmartPantryTheme {
         ProfileScreen(
-            profile = UserProfile(
+            profile = User(
                 userCode = "SP01001",
                 displayName = "Maya Patel", email = "maya.patel@gmail.com",
                 phoneNo = "0123456789",
@@ -174,7 +180,7 @@ private fun UserPreview() {
 private fun AdminPreview() {
     SmartPantryTheme {
         ProfileScreen(
-            profile = UserProfile(
+            profile = User(
                 userCode = "SP01001",
                 displayName = "Admin", email = "admin@gmail.com",
                 phoneNo = "0198765432",

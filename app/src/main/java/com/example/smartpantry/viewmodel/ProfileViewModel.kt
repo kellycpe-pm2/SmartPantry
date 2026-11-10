@@ -1,15 +1,17 @@
-package com.example.smartpantry.Screen.Profile
+package com.example.smartpantry.viewmodel
+
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.smartpantry.model.UserProfile
+import com.example.smartpantry.Screen.Profile.ProfileRepository
+import com.example.smartpantry.model.User
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 class ProfileViewModel : ViewModel() {
-    private val _profile = MutableStateFlow<UserProfile?>(null)
-    val profile: StateFlow<UserProfile?> = _profile
+    private val _profile = MutableStateFlow<User?>(null)
+    val profile: StateFlow<User?> = _profile
 
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading
@@ -36,7 +38,7 @@ class ProfileViewModel : ViewModel() {
         }
     }
 
-    fun save(updated: UserProfile) {
+    fun save(updated: User) {
         viewModelScope.launch {
             runCatching { ProfileRepository.updateMyProfile(updated) }
                 .onSuccess { _profile.value = updated }

@@ -16,25 +16,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.example.smartpantry.model.UserProfile
-import com.example.smartpantry.ui.theme.SmartPantryTheme
+import com.example.smartpantry.model.User
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 
-private enum class Field { NAME, GENDER, DOB, PHONE, EMAIL }
+private enum class Field { NAME, HOUSEHOLD, DOB, PHONE, EMAIL }
 private data class FieldRow(val label: String, val value: String, val field: Field?)
 
 private val EMAIL_REGEX = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")
 
 @Composable
 fun AccountSecurityScreen(
-    profile: UserProfile,
-    onSave: (UserProfile) -> Unit,
+    profile: User,
+    onSave: (User) -> Unit,
     onChangeEmail: (String) -> Unit,   // separate on purpose: email lives in Supabase Auth, not the profile table
     onChangePassword: () -> Unit,
     onDeleteAccount: () -> Unit,
@@ -44,7 +42,7 @@ fun AccountSecurityScreen(
     var editing by remember { mutableStateOf<Field?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
-    fun save(updated: UserProfile) {
+    fun save(updated: User) {
         current = updated
         onSave(updated)
         editing = null
@@ -52,7 +50,7 @@ fun AccountSecurityScreen(
 
     val profileRows = listOf(
         FieldRow("Name", current.displayName, Field.NAME),
-        FieldRow("Gender", current.gender ?: "Not set", Field.GENDER),
+        FieldRow("Household size", current.householdSize?.toString() ?: "Not set", Field.HOUSEHOLD),
         FieldRow("Date of birth", current.dateOfBirth ?: "Not set", Field.DOB),
     )
 
@@ -132,12 +130,13 @@ fun AccountSecurityScreen(
             onDismiss = { editing = null },
             onConfirm = { save(current.copy(dateOfBirth = it.ifBlank { null })) }
         )
-        Field.GENDER -> ChoiceDialog(
-            title = "Gender",
-            options = listOf("Female", "Male", "Prefer not to say"),
-            selected = current.gender ?: "Prefer not to say",
+        Field.HOUSEHOLD -> TextFieldDialog(
+            title = "Household size",
+            initial = current.householdSize?.toString() ?: "",
+            keyboardType = KeyboardType.Number,
+            validate = { if (it.isNotBlank() && it.toIntOrNull() !in 1..20) "Enter a number from 1 to 20" else null },
             onDismiss = { editing = null },
-            onConfirm = { save(current.copy(gender = it)) }
+            onConfirm = { save(current.copy(householdSize = it.toIntOrNull())) }
         )
         null -> Unit
     }
@@ -315,7 +314,7 @@ private fun AccountSecurityDarkPreview() {
 @Composable
 private fun AccountSecurityPreviewContent() {
     AccountSecurityScreen(
-        profile = UserProfile(
+        profile = User(
             userCode = "SP01001",
             displayName = "Maya Patel", email = "maya.patel@email.com",
             phoneNo = "0123456789",

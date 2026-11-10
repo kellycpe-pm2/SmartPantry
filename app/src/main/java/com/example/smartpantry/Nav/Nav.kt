@@ -39,7 +39,7 @@ import com.example.smartpantry.R
 import com.example.smartpantry.Screen.Screen.IngredientUI.CreateIngredientScreen
 import com.example.smartpantry.Screen.Profile.AccountSecurityScreen
 import com.example.smartpantry.Screen.Profile.ProfileScreen
-import com.example.smartpantry.Screen.Profile.ProfileViewModel
+import com.example.smartpantry.viewmodel.ProfileViewModel
 import com.example.smartpantry.Screen.Screen.IngredientUI.PantryScreen
 import com.example.smartpantry.ui.home.UserDashboardScreen
 import com.example.smartpantry.viewmodel.IngredientViewModel

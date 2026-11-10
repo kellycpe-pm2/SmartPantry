@@ -1,7 +1,7 @@
 package com.example.smartpantry.Screen.Profile
 
 import com.example.smartpantry.storage.remote.supabase
-import com.example.smartpantry.model.UserProfile
+import com.example.smartpantry.model.User
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.postgrest.from
@@ -14,13 +14,12 @@ import kotlinx.serialization.json.put
 private data class ProfileUpdate(
     @SerialName("display_name") val displayName: String,
     @SerialName("phone_no") val phoneNo: String,
-    val gender: String?,
+    @SerialName("household_size") val householdSize: Int? = null,
     @SerialName("date_of_birth") val dateOfBirth: String?
 )
 
 object ProfileRepository {
-    private const val TABLE = "user_profiles"
-    // Store the auth UUID separately — NOT in UserProfile, used only for DB ops
+    private const val TABLE = "User"
     private var currentAuthId: String? = null
 
     suspend fun signIn(email: String, password: String) {
@@ -57,7 +56,7 @@ object ProfileRepository {
         supabase.auth.updateUser { password = newPassword }
     }
 
-    suspend fun loadMyProfile(): UserProfile {
+    suspend fun loadMyProfile(): User {
         supabase.auth.awaitInitialization()
 
         // Get fresh UUID every time + cache it
@@ -67,10 +66,10 @@ object ProfileRepository {
 
         return supabase.from(TABLE)
             .select { filter { eq("id", userId) } }
-            .decodeSingle<UserProfile>()
+            .decodeSingle<User>()
     }
 
-    suspend fun updateMyProfile(profile: UserProfile) {
+    suspend fun updateMyProfile(profile: User) {
         val userId = currentAuthId
             ?: throw IllegalStateException("Not signed in")
 
@@ -78,7 +77,7 @@ object ProfileRepository {
             ProfileUpdate(
                 displayName = profile.displayName,
                 phoneNo = profile.phoneNo,
-                gender = profile.gender,
+                householdSize = profile.householdSize,
                 dateOfBirth = profile.dateOfBirth
             )
         ) {
