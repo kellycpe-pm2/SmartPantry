@@ -1,6 +1,5 @@
 package com.example.smartpantry.storage.local
 
-
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.example.smartpantry.model.RecipeIngredient
@@ -14,7 +13,8 @@ data class Recipe_IngredientEntity(
     val unit: String?
 )
 
-fun RecipeIngredient.toModel() = RecipeIngredient(
+// 👇 MUST start with Recipe_IngredientEntity (Room) and return RecipeIngredient (Model)
+fun Recipe_IngredientEntity.toModel() = RecipeIngredient(
     id = id,
     ingredientId = ingredientId,
     recipeId = recipeId,
@@ -22,6 +22,7 @@ fun RecipeIngredient.toModel() = RecipeIngredient(
     unit = unit
 )
 
+// 👇 MUST start with RecipeIngredient (Model) and return Recipe_IngredientEntity (Room)
 fun RecipeIngredient.toEntity() = Recipe_IngredientEntity(
     id = id ?: 0,
     ingredientId = ingredientId,

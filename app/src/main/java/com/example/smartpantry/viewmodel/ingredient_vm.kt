@@ -57,14 +57,11 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
     private val syncIntervalMs = 5 * 60 * 1000L
 
     init {
-        // Observe local database
         viewModelScope.launch {
             dao.observeAll().collect { entities ->
                 _ingredients.value = entities.map { it.toModel() }
             }
         }
-
-        // Try to sync any missing images in the background on app launch
         syncPendingImages()
     }
 
@@ -89,38 +86,38 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
 
         viewModelScope.launch {
             try {
-                // 1. Save image permanently to local internal storage
-                val localPath = s.imagePath?.let { path ->
+                // Save image permanently (downscaled)
+                val persistedPath = s.imagePath?.let { path ->
                     withContext(Dispatchers.IO) {
                         try {
                             if (path.startsWith("/data")) path
                             else saveImageToInternalStorage(getApplication(), Uri.parse(path))
                         } catch (e: Exception) {
-                            Log.e("IngredientSync", "Local image save failed", e)
                             null
                         }
                     }
+
                 }
 
-                // 2. Build the model (No Remote URL yet)
+                // Build the model (Remote URL is null for now)
                 val ingredient = Ingredient(
                     ingredientName = s.ingredientName.trim(),
                     category = s.category.takeIf { it.isNotEmpty() },
                     weight = s.quantityText.toDoubleOrNull(),
                     unit = s.unit.takeIf { it.isNotEmpty() },
                     description = s.description.takeIf { it.isNotEmpty() },
-                    image = null, // Leave remote URL null for now
-                    localImagePath = localPath, // Local path is saved
+                    image = null,
+                    localImagePath = persistedPath,
                     minExpiredDuration = s.minExpiryDays.toShortOrNull(),
                     maxExpiredDuration = s.maxExpiryDays.toShortOrNull(),
                     createAt = System.currentTimeMillis(),
                     updateAt = System.currentTimeMillis()
                 )
 
-                // 3. Save locally to Room
+                // Save to Room
                 val localId = dao.insert(ingredient.toEntity())
 
-                // 4. Reset UI immediately (User sees success instantly)
+                // Reset UI immediately (User sees success instantly)
                 _uiState.update { it.copy(isSaving = false, saved = true) }
                 yield()
                 _uiState.update {
@@ -131,7 +128,7 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
 
-                // 5. Upload to Supabase in the background
+                // Upload to Supabase in the background
                 uploadIngredientToSupabase(localId)
 
             } catch (local: Exception) {
@@ -151,7 +148,7 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
                 val localPath = entity.localImagePath
                 var remoteUrl = entity.image
 
-                // Upload image if it exists locally and we don't have a remote URL
+                // Upload image if it exists locally and we don't have a remote URL yet
                 if (remoteUrl == null && localPath != null) {
                     val file = File(localPath)
                     if (file.exists()) {
@@ -159,30 +156,26 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
 
-                // Update Room with the remote URL
+                // Update Room with the new remote URL
                 val updatedModel = entity.toModel().copy(image = remoteUrl)
                 dao.insert(updatedModel.toEntity())
 
-                // Push the full ingredient (with remote URL) to Supabase Database
+                // Push the full ingredient to Supabase Database
                 createIngredient(updatedModel)
-                Log.d("IngredientSync", "✅ Successfully uploaded to Supabase")
 
             } catch (e: Exception) {
-                Log.e("IngredientSync", "Background Supabase upload failed (offline)", e)
+                Log.e("IngredientSync", "Background upload failed (probably offline)", e)
             }
         }
     }
 
-    // --- 3. AUTO SYNC MISSING IMAGES ON APP LAUNCH ---
+    // --- 3. AUTO SYNC MISSING IMAGES ---
     fun syncPendingImages() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val allIngredients = dao.observeAll().first()
-                val pendingIngredients = allIngredients.filter {
-                    it.localImagePath != null && it.image == null
-                }
-
-                for (entity in pendingIngredients) {
+                val pending = allIngredients.filter { it.localImagePath != null && it.image == null }
+                for (entity in pending) {
                     uploadIngredientToSupabase(entity.id)
                 }
             } catch (e: Exception) {

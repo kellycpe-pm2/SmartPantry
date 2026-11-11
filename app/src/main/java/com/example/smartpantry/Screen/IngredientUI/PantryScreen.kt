@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.smartpantry.model.Ingredient
 import com.example.smartpantry.viewmodel.IngredientViewModel
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,7 +38,7 @@ fun PantryScreen(vm: IngredientViewModel) {
                         fontWeight = FontWeight.Bold, color = scheme.primary)
                 },
                 actions = {
-                    IconButton(onClick = { vm.refreshIngredients() }) {
+                    IconButton(onClick = { vm.refreshIngredients(force = true) }) {
                         Icon(Icons.Default.Refresh, "Refresh", tint = scheme.primary)
                     }
                 },
@@ -82,6 +83,17 @@ fun PantryScreen(vm: IngredientViewModel) {
 private fun PantryRow(item: Ingredient) {
     val scheme = MaterialTheme.colorScheme
 
+    // 👇 FIXED: Explicitly declare types to avoid the `isNullOrBlank` receiver mismatch
+    val localFile: String? = item.localImagePath
+    val remoteUrl: String? = item.image
+
+    // Choose local if the file actually exists on this phone, otherwise use remote URL
+    val imageToLoad = if (localFile != null && localFile.isNotEmpty() && File(localFile).exists()) {
+        File(localFile)
+    } else {
+        remoteUrl
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -98,9 +110,10 @@ private fun PantryRow(item: Ingredient) {
                 .background(scheme.primaryContainer),
             contentAlignment = Alignment.Center
         ) {
-            if (!item.image.isNullOrBlank()) {
+            // 👇 Check if `imageToLoad` has a value (it will be null if both local and remote are null)
+            if (imageToLoad != null) {
                 AsyncImage(
-                    model = item.image,
+                    model = imageToLoad,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
@@ -118,6 +131,7 @@ private fun PantryRow(item: Ingredient) {
             Text(item.ingredientName,
                 fontWeight = FontWeight.SemiBold,
                 color = scheme.onBackground)
+
             val subtitle = buildString {
                 if (!item.category.isNullOrBlank()) append(item.category).append(" · ")
                 if (item.weight != null) append(item.weight).append(item.unit ?: "")

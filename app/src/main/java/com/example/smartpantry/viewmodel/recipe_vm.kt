@@ -20,11 +20,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import java.io.File
+
 data class CreateRecipeUiState(
     val recipeName: String = "",
     val category: String = "",
@@ -59,6 +61,8 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                 _recipes.value = entities.map { it.toModel() }
             }
         }
+
+        syncPendingImages()
     }
 
     // --- Form Updaters for CreateRecipeScreen ---
@@ -92,13 +96,13 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                     }
                 }
 
-                // 2. Upload Image Remotely
+                // 2. Upload Image Remotely (Fails silently if offline)
                 val remoteUrl = localPath?.let { path ->
                     withContext(Dispatchers.IO) {
                         try {
                             uploadRecipeImage(Uri.fromFile(File(path)), getApplication())
                         } catch (e: Exception) {
-                            Log.e("RecipeSync", "Remote image upload failed", e)
+                            Log.e("RecipeSync", "Remote image upload failed (probably offline)", e)
                             null
                         }
                     }
@@ -129,7 +133,6 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
 
                 // 5. Save Ingredients
                 if (ingredients.isNotEmpty()) {
-                    // Use remote ID if available, otherwise fallback to local ID (for offline support)
                     val finalRecipeId = remoteRecipeId ?: localRecipeId
 
                     val ingredientsWithId = ingredients.map {
@@ -168,6 +171,57 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun uploadRecipeToSupabase(localRecipeId: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val entity = dao.getById(localRecipeId) ?: return@launch
+                val localPath = entity.localRecipeImage
+                var remoteUrl = entity.recipeImage
+
+                if (remoteUrl == null && localPath != null) {
+                    val file = File(localPath)
+                    if (file.exists()) {
+                        remoteUrl = uploadRecipeImage(Uri.fromFile(file), getApplication())
+                    }
+                }
+
+                val updatedModel = entity.toModel().copy(recipeImage = remoteUrl)
+                dao.insert(updatedModel.toEntity())
+
+                val savedRemoteRecipe = createRecipe(updatedModel)
+                val remoteId = savedRemoteRecipe.recipeId ?: return@launch
+
+                val localIngredients = ingredientDao.getIngredientsForRecipe(localRecipeId).first()
+                if (localIngredients.isNotEmpty()) {
+                    val remoteIngredients = localIngredients.map { entity ->
+                        entity.toModel().copy(
+                            id = null,
+                            recipeId = remoteId
+                        )
+                    }
+                    createRecipeIngredients(remoteIngredients)
+                }
+            } catch (e: Exception) {
+                Log.e("RecipeSync", "Background sync failed (offline)", e)
+            }
+        }
+    }
+
+    // 👇 ADDED: Finds offline recipes and triggers the upload
+    fun syncPendingImages() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val allRecipes = dao.observeAll().first()
+                val pending = allRecipes.filter { it.localRecipeImage != null && it.recipeImage == null }
+                for (entity in pending) {
+                    uploadRecipeToSupabase(entity.id)
+                }
+            } catch (e: Exception) {
+                Log.e("RecipeSync", "Pending sync failed", e)
+            }
+        }
+    }
+
     fun refreshRecipes(force: Boolean = false) {
         val now = System.currentTimeMillis()
         if (!force && (now - lastSyncTime) < syncIntervalMs) return
@@ -180,6 +234,7 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                 }
                 lastSyncTime = System.currentTimeMillis()
             } catch (e: Exception) {
+                Log.e("RecipeSync", "Refresh failed", e)
             }
         }
     }
