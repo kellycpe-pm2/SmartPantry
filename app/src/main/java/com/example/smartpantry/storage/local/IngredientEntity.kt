@@ -12,6 +12,7 @@ data class IngredientEntity(
     val unit: String?,
     val description: String?,
     val image: String?,
+    val localImagePath: String? = null,
     val minExpiredDuration: Short?,
     val maxExpiredDuration: Short?,
     val createAt: Long,

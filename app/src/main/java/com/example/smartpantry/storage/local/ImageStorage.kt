@@ -8,11 +8,6 @@ import android.util.Log
 import java.io.File
 import java.util.UUID
 
-/**
- * Copies the picked image (from camera OR gallery) into the app's internal filesDir.
- * Returns the absolute file path (e.g. /data/user/0/.../files/ingredient_images/abc.jpg).
- * This ensures the image is never deleted by the OS.
- */
 fun saveImageToInternalStorage(context: Context, uri: Uri): String? {
     return try {
         val dir = File(context.filesDir, "ingredient_images").apply { mkdirs() }
@@ -21,7 +16,6 @@ fun saveImageToInternalStorage(context: Context, uri: Uri): String? {
         // 1. Open the input stream from the URI (works for content://, file://, etc.)
         val inputStream = context.contentResolver.openInputStream(uri)
         if (inputStream == null) {
-            Log.e("ImageStorage", "Failed to open input stream for URI: $uri")
             return null
         }
 
@@ -62,7 +56,6 @@ fun saveImageToInternalStorage(context: Context, uri: Uri): String? {
     }
 }
 
-/** Resolves a saved path back to a File or Uri for Coil to display. */
 fun imageModelFor(path: String?): Any? {
     if (path.isNullOrBlank()) return null
     return when {

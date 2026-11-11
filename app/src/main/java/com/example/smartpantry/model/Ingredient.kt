@@ -35,6 +35,9 @@ data class Ingredient(
     @SerialName("create_at")
     val createAt: Long? = null,
 
+    @SerialName("local_image_path")
+    val localImagePath: String? = null,
+
     @SerialName("update_at")
     val updateAt: Long? = null,
 )

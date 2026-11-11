@@ -6,24 +6,34 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [IngredientEntity::class],
-    version = 1,
+    entities = [
+        IngredientEntity::class,
+        RecipeEntity::class,
+        Recipe_IngredientEntity::class
+    ],
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun ingredientDao(): IngredientDao
+    abstract fun recipeDao(): RecipeDao
+    abstract fun recipeIngredientDao(): Recipe_IngredientDao
 
     companion object {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
-        fun get(context: Context): AppDatabase =
-            INSTANCE ?: synchronized(this) {
+        fun get(context: Context): AppDatabase {
+            return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "smartpantry.db"
-                ).build().also { INSTANCE = it }
+                )
+                    .fallbackToDestructiveMigration()
+                    .build()
+                    .also { INSTANCE = it }
             }
+        }
     }
 }

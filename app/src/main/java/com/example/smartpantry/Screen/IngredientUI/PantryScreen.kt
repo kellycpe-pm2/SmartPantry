@@ -1,4 +1,4 @@
-package com.example.smartpantry.Screen.Screen.IngredientUI
+package com.example.smartpantry.Screen.IngredientUI
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*

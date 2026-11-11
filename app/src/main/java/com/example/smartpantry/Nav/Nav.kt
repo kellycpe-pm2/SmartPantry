@@ -8,13 +8,7 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -36,13 +30,15 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.smartpantry.R
-import com.example.smartpantry.Screen.Screen.IngredientUI.CreateIngredientScreen
+import com.example.smartpantry.Screen.IngredientUI.CreateIngredientScreen
 import com.example.smartpantry.Screen.Profile.AccountSecurityScreen
 import com.example.smartpantry.Screen.Profile.ProfileScreen
 import com.example.smartpantry.viewmodel.ProfileViewModel
-import com.example.smartpantry.Screen.Screen.IngredientUI.PantryScreen
+import com.example.smartpantry.Screen.IngredientUI.PantryScreen
+import com.example.smartpantry.Screen.RecipeUI.CreateRecipeScreen
 import com.example.smartpantry.ui.home.UserDashboardScreen
 import com.example.smartpantry.viewmodel.IngredientViewModel
+import com.example.smartpantry.viewmodel.recipe_vm
 
 data class BottomNavItem(
     val route: String,
@@ -77,15 +73,17 @@ fun AppNavHost(
         )
     )
 
-    // The logged-in user's profile, loaded from Supabase (null while loading)
+    // ViewModels
     val profileViewModel: ProfileViewModel = viewModel()
     val profile by profileViewModel.profile.collectAsState()
+
+    val ingredientVm: IngredientViewModel = viewModel()
+    val recipeVm: recipe_vm = viewModel()
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
     val bottomNavRoutes = listOf("home", "pantry", "recipes", "records", "profile")
-    val ingredientVm: IngredientViewModel = viewModel()
 
     LaunchedEffect(navController) {
         navController.currentBackStackEntryFlow.collect { entry ->
@@ -114,8 +112,9 @@ fun AppNavHost(
                         }
                     },
                     onAddClick = {
-                        // prevent stacking multiple "add" screens
-                        navController.navigate("add") {
+                        // Navigate to create screen based on current tab
+                        val routeToAdd = if (currentRoute == "recipes") "create_recipe" else "add"
+                        navController.navigate(routeToAdd) {
                             launchSingleTop = true
                         }
                     }
@@ -130,7 +129,23 @@ fun AppNavHost(
         ) {
             composable("home")    { UserDashboardScreen() }
             composable("pantry")  { PantryScreen(ingredientVm) }
-            composable("recipes") { UserDashboardScreen() }
+
+            // --- RECIPES TAB ---
+            composable("recipes") {
+                var popped by remember { mutableStateOf(false) }
+
+                CreateRecipeScreen(
+                    {
+                    if (!popped) {
+                    popped = true
+                    if (navController.currentBackStackEntry?.destination?.route == "recipes") {
+                        navController.popBackStack(route = "recipes", inclusive = true)
+                    }
+                }},
+                    recipeVm=recipeVm, ingredientVm)
+
+            }
+
             composable("records") { UserDashboardScreen() }
 
             composable("profile") {
@@ -158,15 +173,17 @@ fun AppNavHost(
                         profile = p,
                         onSave = { profileViewModel.save(it) },
                         onChangeEmail = { newEmail -> profileViewModel.changeEmail(newEmail) },
-                        onChangePassword = { /* TODO: change password screen */ },
-                        onDeleteAccount = { /* TODO: needs a server-side step */ },
+                        onChangePassword = { /* TODO */ },
+                        onDeleteAccount = { /* TODO */ },
                         onBack = { navController.popBackStack() }
                     )
                 }
             }
+
             composable("favourites")    { UserDashboardScreen() }
             composable("shopping_list") { UserDashboardScreen() }
 
+            // --- ADD INGREDIENT ---
             composable("add") {
                 var popped by remember { mutableStateOf(false) }
 
@@ -178,7 +195,25 @@ fun AppNavHost(
                                 navController.popBackStack(route = "add", inclusive = true)
                             }
                         }
-                    },ingredientVm
+                    },
+                    vm = ingredientVm
+                )
+            }
+
+            // --- ADD RECIPE ---
+            composable("create_recipe") {
+                var popped by remember { mutableStateOf(false) }
+
+                CreateRecipeScreen(
+                    onBackClick = {
+                        if (!popped) {
+                            popped = true
+                            if (navController.currentBackStackEntry?.destination?.route == "create_recipe") {
+                                navController.popBackStack(route = "create_recipe", inclusive = true)
+                            }
+                        }
+                    },
+                     recipeVm,ingredientVm
                 )
             }
         }

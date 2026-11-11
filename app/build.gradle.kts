@@ -47,8 +47,10 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.datastore.core.jvm)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.room3.common.jvm)
+    implementation(libs.androidx.ui)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
@@ -73,7 +75,7 @@ dependencies {
         implementation("io.github.jan-tennert.supabase:auth-kt")
         implementation("io.github.jan-tennert.supabase:realtime-kt")
         implementation("io.ktor:ktor-client-android:3.5.2")
-// HTTP engine required by supabase-kt
+    implementation("io.github.jan-tennert.supabase:storage-kt")
     implementation("io.ktor:ktor-client-android:3.0.3")
 // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
