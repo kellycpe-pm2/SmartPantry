@@ -35,6 +35,7 @@ import com.example.smartpantry.Screen.Profile.AccountSecurityScreen
 import com.example.smartpantry.Screen.Profile.ProfileScreen
 import com.example.smartpantry.viewmodel.ProfileViewModel
 import com.example.smartpantry.Screen.IngredientUI.PantryScreen
+import com.example.smartpantry.Screen.IngredientUI.RecipeScreen
 import com.example.smartpantry.Screen.RecipeUI.CreateRecipeScreen
 import com.example.smartpantry.ui.home.UserDashboardScreen
 import com.example.smartpantry.viewmodel.IngredientViewModel
@@ -132,18 +133,7 @@ fun AppNavHost(
 
             // --- RECIPES TAB ---
             composable("recipes") {
-                var popped by remember { mutableStateOf(false) }
-
-                CreateRecipeScreen(
-                    {
-                    if (!popped) {
-                    popped = true
-                    if (navController.currentBackStackEntry?.destination?.route == "recipes") {
-                        navController.popBackStack(route = "recipes", inclusive = true)
-                    }
-                }},
-                    recipeVm=recipeVm, ingredientVm)
-
+                RecipeScreen(recipeVm,onAddRecipeClick = {navController.navigate("create_recipe")})
             }
 
             composable("records") { UserDashboardScreen() }
@@ -201,9 +191,9 @@ fun AppNavHost(
             }
 
             // --- ADD RECIPE ---
+
             composable("create_recipe") {
                 var popped by remember { mutableStateOf(false) }
-
                 CreateRecipeScreen(
                     onBackClick = {
                         if (!popped) {
