@@ -83,11 +83,9 @@ fun PantryScreen(vm: IngredientViewModel) {
 private fun PantryRow(item: Ingredient) {
     val scheme = MaterialTheme.colorScheme
 
-    // 👇 FIXED: Explicitly declare types to avoid the `isNullOrBlank` receiver mismatch
     val localFile: String? = item.localImagePath
     val remoteUrl: String? = item.image
 
-    // Choose local if the file actually exists on this phone, otherwise use remote URL
     val imageToLoad = if (localFile != null && localFile.isNotEmpty() && File(localFile).exists()) {
         File(localFile)
     } else {
@@ -110,7 +108,6 @@ private fun PantryRow(item: Ingredient) {
                 .background(scheme.primaryContainer),
             contentAlignment = Alignment.Center
         ) {
-            // 👇 Check if `imageToLoad` has a value (it will be null if both local and remote are null)
             if (imageToLoad != null) {
                 AsyncImage(
                     model = imageToLoad,

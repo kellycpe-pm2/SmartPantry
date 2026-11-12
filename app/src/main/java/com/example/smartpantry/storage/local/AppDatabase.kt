@@ -9,15 +9,18 @@ import androidx.room.RoomDatabase
     entities = [
         IngredientEntity::class,
         RecipeEntity::class,
-        Recipe_IngredientEntity::class
+        Recipe_IngredientEntity::class,
+        IngredientUserEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun ingredientDao(): IngredientDao
     abstract fun recipeDao(): RecipeDao
     abstract fun recipeIngredientDao(): Recipe_IngredientDao
+
+    abstract fun ingredientUserDao(): IngredientUserDao
 
     companion object {
         @Volatile

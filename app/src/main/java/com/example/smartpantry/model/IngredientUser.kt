@@ -1,16 +1,17 @@
-package com.example.smartpantry.model
+package com.example.models
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.math.BigDecimal
 
 @Serializable
 data class IngredientUser(
-    val ingredientUserId: Long? = null,
-    val createdAt: Long = System.currentTimeMillis(),
-    val userId: Long,
-    val ingredientId: Long,
+    @SerialName("IngredientUser_Id") val id: Long? = null,
+    @SerialName("created_at") val createdAt: String? = null,
     val quantity: Double? = null,
-    val quantityUnit: String? = null,
-    val locationStorage: String? = null,
-    val expiredDate: Long
+    @SerialName("quantity_unit") val quantityUnit: String? = null,
+    @SerialName("location_storage") val locationStorage: String? = null,
+    @SerialName("expiredDate") val expiredDate: Long,
+    @SerialName("user_id") val userId: String? = null, // UUID as String in Kotlin
+    @SerialName("ingredientId") val ingredientId: Long? = null
 )

@@ -12,10 +12,8 @@ suspend fun createRecipeIngredients(recipeIngredients: List<RecipeIngredient>) =
             if (recipeIngredients.isNotEmpty()) {
                 // Insert list of ingredients linked to a recipe
                 supabase.from("Recipe_Ingredient").insert(recipeIngredients)
-                Log.d("RecipeSync", "✅ Saved ${recipeIngredients.size} ingredients to Supabase")
             }
         } catch (e: Exception) {
-            Log.e("RecipeSync", "❌ Failed to save recipe ingredients", e)
             throw e
         }
     }
@@ -29,7 +27,6 @@ suspend fun getRecipeIngredients(recipeId: Long): List<RecipeIngredient> =
                 }
                 .decodeList<RecipeIngredient>()
         } catch (e: Exception) {
-            Log.e("RecipeSync", "❌ Failed to fetch recipe ingredients", e)
             emptyList()
         }
     }
