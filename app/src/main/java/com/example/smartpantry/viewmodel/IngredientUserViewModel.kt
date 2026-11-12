@@ -10,7 +10,10 @@ import com.example.smartpantry.storage.local.AppDatabase
 import com.example.smartpantry.storage.local.toEntity
 import com.example.smartpantry.storage.local.toModel
 import com.example.smartpantry.storage.remote.createIngredientUser
+import com.example.smartpantry.storage.remote.getIngredientUsers
 import com.example.smartpantry.storage.remote.getIngredients
+import com.example.smartpantry.storage.remote.supabase
+import io.github.jan.supabase.postgrest.from
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -145,6 +148,39 @@ class IngredientUserViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } catch (e: Exception) {
                 Log.e("Inventory", "Failed to create ingredient", e)
+            }
+        }
+    }
+
+    fun refreshInventory(force: Boolean = false) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val remote = getIngredientUsers()
+                if (remote.isNotEmpty()) {
+                    dao.insertAll(remote.map { it.toEntity() })
+                }
+            } catch (e: Exception) {
+                Log.e("Inventory", "Refresh failed", e)
+            }
+        }
+    }
+
+    fun deleteInventoryItem(id: Long) {
+        viewModelScope.launch {
+            try {
+                // 1. Delete Locally from Room
+                dao.deleteById(id)
+
+                // 2. Delete Remotely from Supabase
+                try {
+                    supabase.from("Ingredient_User").delete {
+                        filter {
+                            eq("IngredientUser_Id", id)
+                        }
+                    }
+                } catch (e: Exception) {
+                }
+            } catch (e: Exception) {
             }
         }
     }

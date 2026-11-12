@@ -38,6 +38,7 @@ import com.example.smartpantry.viewmodel.ProfileViewModel
 import com.example.smartpantry.Screen.IngredientUI.PantryScreen
 import com.example.smartpantry.Screen.IngredientUI.RecipeScreen
 import com.example.smartpantry.Screen.InventoryUI.AddInventoryFlowScreen
+import com.example.smartpantry.Screen.InventoryUI.InventoryScreen
 import com.example.smartpantry.Screen.RecipeUI.CreateRecipeScreen
 import com.example.smartpantry.ui.home.UserDashboardScreen
 import com.example.smartpantry.viewmodel.IngredientUserViewModel
@@ -134,9 +135,15 @@ fun AppNavHost(
             modifier = Modifier.padding(padding)
         ) {
             composable("home")    { UserDashboardScreen() }
-            composable("pantry")  { AddInventoryFlowScreen({},ingredientUserVm) }
+
+
+            composable("pantry")  {
+                InventoryScreen(onAddInventoryClick = {navController.navigate("add_ingredient")},ingredientUserVm, ingredientVm)
+            }
 
             // --- RECIPES TAB ---
+
+
             composable("recipes") {
                 RecipeScreen(recipeVm,onAddRecipeClick = {navController.navigate("create_recipe")})
             }
@@ -193,6 +200,23 @@ fun AppNavHost(
                     },
                     vm = ingredientVm
                 )
+            }
+
+
+            //--ADD INGREDIENT TO INVENTORY
+            composable("add_ingredient"){
+
+                var popped by remember { mutableStateOf(false) }
+
+                AddInventoryFlowScreen({
+
+                        if (!popped) {
+                            popped = true
+                            if (navController.currentBackStackEntry?.destination?.route == "add_ingredient") {
+                                navController.popBackStack(route = "add_ingredient", inclusive = true)
+                            }
+                        }
+                },ingredientUserVm)
             }
 
             // --- ADD RECIPE ---

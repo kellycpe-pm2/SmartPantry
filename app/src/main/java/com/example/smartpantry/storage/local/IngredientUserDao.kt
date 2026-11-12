@@ -22,4 +22,6 @@ interface IngredientUserDao {
 
     @Query("DELETE FROM ingredient_user WHERE IngredientUser_Id = :id")
     suspend fun deleteById(id: Long)
+
+
 }
