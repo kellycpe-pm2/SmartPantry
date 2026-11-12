@@ -29,6 +29,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.models.IngredientUser
 import com.example.smartpantry.R
 import com.example.smartpantry.Screen.IngredientUI.CreateIngredientScreen
 import com.example.smartpantry.Screen.Profile.AccountSecurityScreen
@@ -36,8 +37,10 @@ import com.example.smartpantry.Screen.Profile.ProfileScreen
 import com.example.smartpantry.viewmodel.ProfileViewModel
 import com.example.smartpantry.Screen.IngredientUI.PantryScreen
 import com.example.smartpantry.Screen.IngredientUI.RecipeScreen
+import com.example.smartpantry.Screen.InventoryUI.AddInventoryFlowScreen
 import com.example.smartpantry.Screen.RecipeUI.CreateRecipeScreen
 import com.example.smartpantry.ui.home.UserDashboardScreen
+import com.example.smartpantry.viewmodel.IngredientUserViewModel
 import com.example.smartpantry.viewmodel.IngredientViewModel
 import com.example.smartpantry.viewmodel.recipe_vm
 
@@ -80,6 +83,8 @@ fun AppNavHost(
 
     val ingredientVm: IngredientViewModel = viewModel()
     val recipeVm: recipe_vm = viewModel()
+    val ingredientUserVm: IngredientUserViewModel = viewModel()
+
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -129,7 +134,7 @@ fun AppNavHost(
             modifier = Modifier.padding(padding)
         ) {
             composable("home")    { UserDashboardScreen() }
-            composable("pantry")  { PantryScreen(ingredientVm) }
+            composable("pantry")  { AddInventoryFlowScreen({},ingredientUserVm) }
 
             // --- RECIPES TAB ---
             composable("recipes") {

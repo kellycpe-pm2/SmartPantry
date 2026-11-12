@@ -1,193 +1,284 @@
-package com.example.smartpantry.Screen.IngredientUI
+package com.example.smartpantry.Screen.InventoryUI
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.models.IngredientUser
+import coil.compose.AsyncImage
 import com.example.smartpantry.model.Ingredient
+import com.example.smartpantry.storage.remote.supabase
 import com.example.smartpantry.viewmodel.IngredientUserViewModel
-import com.example.smartpantry.viewmodel.IngredientViewModel
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import androidx.compose.ui.platform.LocalLocale
+import io.github.jan.supabase.auth.auth
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun InventoryScreen(
-    onAddInventoryClick: () -> Unit,
-    vm: IngredientUserViewModel = viewModel(),
-    ingredientVm: IngredientViewModel = viewModel()
+fun AddInventoryFlowScreen(
+    onBackClick: () -> Unit,
+    vm: IngredientUserViewModel = viewModel()
 ) {
-    val inventory by vm.inventory.collectAsState()
-    val availableIngredients by ingredientVm.ingredients.collectAsState()
+    val allIngredients by vm.allIngredients.collectAsState()
+    val stagedItems by vm.stagedItems.collectAsState()
+    val isLoading by vm.isLoading.collectAsState()
     val scheme = MaterialTheme.colorScheme
+
+    var searchQuery by remember { mutableStateOf("") }
+
+    // Dialog States
+    var configuringIngredient by remember { mutableStateOf<Ingredient?>(null) }
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var showCreateAgainPrompt by remember { mutableStateOf(false) }
+    var newlyCreatedIngredient by remember { mutableStateOf<Ingredient?>(null) }
+
+    val filteredIngredients = allIngredients.filter { it.ingredientName.contains(searchQuery, ignoreCase = true) }
+    val exactMatchExists = allIngredients.any { it.ingredientName.equals(searchQuery, ignoreCase = true) }
+
+    // 👇 GET THE REAL USER ID FROM SUPABASE AUTH
+    // If the user is not logged in, it uses a test UUID so you can still test the flow
+    val currentUserId: String = supabase.auth.currentUserOrNull()?.id
+        ?: "facad5cd-98f6-4d8a-b4b5-cf13f0515e0e"
 
     Scaffold(
         containerColor = scheme.background,
         topBar = {
             TopAppBar(
-                title = {
-                    Text("My Inventory", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = scheme.primary)
+                title = { Text("Add Inventory Items", fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onBackClick) {
+                        Icon(Icons.Default.ArrowBack, "Back", tint = scheme.primary)
+                    }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        // You can add a refresh function in IngredientUserViewModel if needed
-                        // vm.refreshInventory()
-                    }) {
-                        Icon(Icons.Default.Refresh, "Refresh", tint = scheme.primary)
+                    if (isLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp).padding(end = 16.dp))
+                    } else {
+                        IconButton(onClick = { vm.refreshData() }) {
+                            Icon(Icons.Default.Refresh, "Refresh from Supabase", tint = scheme.primary)
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = scheme.background,
-                    titleContentColor = scheme.primary,
-                    actionIconContentColor = scheme.primary
+                    titleContentColor = scheme.primary
                 )
             )
         },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = onAddInventoryClick,
-                containerColor = scheme.primary,
-                contentColor = scheme.onPrimary
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Add to Inventory")
-            }
-        }
-    ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (inventory.isEmpty()) {
-                Column(
-                    modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Icon(
-                        Icons.Default.Kitchen,
-                        contentDescription = null,
-                        modifier = Modifier.size(64.dp),
-                        tint = scheme.primary.copy(alpha = 0.5f)
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    Text("Inventory is empty", fontWeight = FontWeight.Bold, color = scheme.onBackground)
-                    Spacer(Modifier.height(4.dp))
-                    Text("Tap + to add items to your pantry", fontSize = 12.sp, color = scheme.onSurfaceVariant)
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(vertical = 12.dp, horizontal = 0.dp)
-                ) {
-                    items(inventory, key = { it.id ?: 0L }) { item ->
-                        val ingredientInfo = availableIngredients.find { it.ingredientId == item.ingredientId }
-                        InventoryRow(item, ingredientInfo, vm)
+        bottomBar = {
+            if (stagedItems.isNotEmpty()) {
+                Surface(shadowElevation = 8.dp, color = scheme.surface) {
+                    Button(
+                        onClick = {
+                            vm.saveAllToInventory()
+                            onBackClick()
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(16.dp).height(50.dp),
+                        shape = RoundedCornerShape(25.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = scheme.primary)
+                    ) {
+                        Text("Save ${stagedItems.size} Items to Inventory", fontWeight = FontWeight.Bold)
                     }
                 }
             }
         }
-    }
-}
+    ) { padding ->
+        Column(modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
 
-@Composable
-private fun InventoryRow(
-    item: IngredientUser,
-    ingredientInfo: Ingredient?,
-    vm: IngredientUserViewModel
-) {
-    val scheme = MaterialTheme.colorScheme
-
-    // Format expiration date safely
-    val dateFormat = SimpleDateFormat("dd MMM yyyy", LocalLocale.current.platformLocale)
-    val expiryString = dateFormat.format(Date(item.expiredDate))
-
-    // Check if expiring soon (within 3 days) or already expired
-    val timeLeft = item.expiredDate - System.currentTimeMillis()
-    val isExpiringSoon = timeLeft in 0..(3 * 24 * 60 * 60 * 1000)
-    val isExpired = timeLeft < 0
-
-    val badgeColor = when {
-        isExpired -> scheme.error
-        isExpiringSoon -> Color(0xFFF57C00) // Orange
-        else -> scheme.primary
-    }
-
-    val badgeTextColor = when {
-        isExpired -> scheme.onError
-        isExpiringSoon -> Color.White
-        else -> scheme.onPrimary
-    }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(scheme.surfaceVariant)
-            .padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // Icon Placeholder
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(scheme.primaryContainer),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Default.Kitchen, contentDescription = null, tint = scheme.primary)
-        }
-
-        // Details
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = ingredientInfo?.ingredientName ?: "Unknown Ingredient",
-                fontWeight = FontWeight.SemiBold,
-                color = scheme.onBackground
+            // --- 1. Search Bar ---
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("Search ingredient...") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                shape = RoundedCornerShape(12.dp)
             )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = "${item.quantity ?: 0.0} ${item.quantityUnit ?: ""} • ${item.locationStorage ?: "Pantry"}",
-                fontSize = 12.sp,
-                color = scheme.onSurfaceVariant
-            )
-        }
 
-        // Expiry Badge
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .background(badgeColor.copy(alpha = if (isExpired || isExpiringSoon) 1f else 0.15f))
-                .padding(horizontal = 8.dp, vertical = 4.dp)
-        ) {
-            Text(
-                text = if (isExpired) "Expired" else expiryString,
-                fontSize = 11.sp,
-                color = if (isExpired || isExpiringSoon) badgeTextColor else badgeColor,
-                fontWeight = FontWeight.Medium
-            )
-        }
+            // --- 2. Create Button (if not found) ---
+            if (searchQuery.isNotBlank() && !exactMatchExists) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable {
+                        showCreateDialog = true
+                    },
+                    colors = CardDefaults.cardColors(containerColor = scheme.primaryContainer)
+                ) {
+                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Add, contentDescription = null, tint = scheme.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Create \"$searchQuery\"", fontWeight = FontWeight.Bold, color = scheme.primary)
+                    }
+                }
+            }
 
-        // Delete Button
-        IconButton(onClick = {
-            item.id?.let { vm.deleteInventoryItem(it) }
-        }) {
-            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = scheme.error)
+            // --- 3. Staged Items List ---
+            if (stagedItems.isNotEmpty()) {
+                Text("Items to add:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 8.dp))
+                LazyColumn(modifier = Modifier.heightIn(max = 200.dp)) {
+                    items(stagedItems) { staged ->
+                        val ing = allIngredients.find { it.ingredientId == staged.ingredientId }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("${ing?.ingredientName} - ${staged.quantity} ${staged.quantityUnit}")
+                            IconButton(onClick = { vm.removeStagedItem(staged) }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Remove", tint = scheme.error)
+                            }
+                        }
+                    }
+                }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            }
+
+            // --- 4. Search Results (With Smart Image Logic) ---
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                items(filteredIngredients) { ing ->
+                    ListItem(
+                        headlineContent = { Text(ing.ingredientName) },
+                        supportingContent = { Text(ing.category ?: "Uncategorized") },
+                        leadingContent = {
+                            // SMART IMAGE LOGIC: Local if exists, else Supabase URL
+                            val localFile: String? = ing.localImagePath
+                            val remoteUrl: String? = ing.image
+                            val imageToLoad = if (localFile != null && localFile.isNotEmpty() && File(localFile).exists()) {
+                                File(localFile)
+                            } else {
+                                remoteUrl
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(scheme.primaryContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (imageToLoad != null) {
+                                    AsyncImage(
+                                        model = imageToLoad,
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Text(ing.ingredientName.firstOrNull()?.uppercase() ?: "?", color = scheme.primary)
+                                }
+                            }
+                        },
+                        modifier = Modifier.clickable { configuringIngredient = ing }
+                    )
+                }
+            }
         }
+    }
+
+    // --- DIALOG 1: Configure Quantity & Date ---
+    configuringIngredient?.let { ingredient ->
+        var qty by remember { mutableStateOf("1") }
+        var unit by remember { mutableStateOf(ingredient.unit ?: "pcs") }
+        var location by remember { mutableStateOf("Pantry") }
+        var days by remember { mutableStateOf("7") }
+
+        AlertDialog(
+            onDismissRequest = { configuringIngredient = null },
+            title = { Text("Add ${ingredient.ingredientName}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(value = qty, onValueChange = { qty = it }, label = { Text("Qty") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                        OutlinedTextField(value = unit, onValueChange = { unit = it }, label = { Text("Unit") }, modifier = Modifier.weight(1f))
+                    }
+                    OutlinedTextField(value = location, onValueChange = { location = it }, label = { Text("Storage Location") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = days, onValueChange = { days = it }, label = { Text("Expires in (days)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val expiryTimestamp = System.currentTimeMillis() + ((days.toLongOrNull() ?: 7L) * 24 * 60 * 60 * 1000)
+
+                    // PASS THE USER ID TO THE VIEWMODEL
+                    vm.stageItem(
+                        ingredientId = ingredient.ingredientId!!,
+                        qty = qty.toDoubleOrNull() ?: 1.0,
+                        unit = unit,
+                        location = location,
+                        expiredDate = expiryTimestamp,
+                        userId = currentUserId
+                    )
+                    configuringIngredient = null
+                }) { Text("Add to List") }
+            },
+            dismissButton = { TextButton(onClick = { configuringIngredient = null }) { Text("Cancel") } }
+        )
+    }
+
+    // --- DIALOG 2: Create New Ingredient ---
+    if (showCreateDialog) {
+        var newCategory by remember { mutableStateOf("") }
+        var newWeight by remember { mutableStateOf("") }
+        var newUnit by remember { mutableStateOf("g") }
+
+        AlertDialog(
+            onDismissRequest = { showCreateDialog = false },
+            title = { Text("Create \"$searchQuery\"") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Category (e.g. Fruit, Veg, Meat)")
+                    OutlinedTextField(value = newCategory, onValueChange = { newCategory = it }, singleLine = true)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(value = newWeight, onValueChange = { newWeight = it }, label = { Text("Default Weight") }, modifier = Modifier.weight(1f))
+                        OutlinedTextField(value = newUnit, onValueChange = { newUnit = it }, label = { Text("Unit") }, modifier = Modifier.weight(1f))
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.createNewIngredient(searchQuery, newCategory, newWeight.toDoubleOrNull() ?: 0.0, newUnit) { createdIngredient ->
+                        newlyCreatedIngredient = createdIngredient
+                        showCreateDialog = false
+                        showCreateAgainPrompt = true // Trigger the "Create Again?" prompt
+                        searchQuery = ""
+                    }
+                }) { Text("Create") }
+            },
+            dismissButton = { TextButton(onClick = { showCreateDialog = false }) { Text("Cancel") } }
+        )
+    }
+
+    // --- DIALOG 3: Create Again? Prompt ---
+    if (showCreateAgainPrompt) {
+        AlertDialog(
+            onDismissRequest = { showCreateAgainPrompt = false },
+            title = { Text("Ingredient Created!") },
+            text = { Text("Do you want to create another ingredient?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showCreateAgainPrompt = false
+                    showCreateDialog = true // Reopen create dialog
+                }) { Text("Yes, Create Again") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showCreateAgainPrompt = false
+                    // Proceed to configure the item we just created
+                    configuringIngredient = newlyCreatedIngredient
+                }) { Text("No, Add to Inventory") }
+            }
+        )
     }
 }
