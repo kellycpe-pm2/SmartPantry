@@ -85,7 +85,7 @@ class IngredientUserViewModel(app: Application) : AndroidViewModel(app) {
             quantityUnit = unit,
             locationStorage = location,
             expiredDate = expiredDate,
-            userId = userId // 👈 Set it here
+            userId = userId
         )
         _stagedItems.update { it + newItem }
     }

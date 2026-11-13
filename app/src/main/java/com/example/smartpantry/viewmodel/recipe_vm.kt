@@ -8,14 +8,15 @@ import androidx.lifecycle.viewModelScope
 import com.example.smartpantry.model.Recipe
 import com.example.smartpantry.model.RecipeIngredient
 import com.example.smartpantry.storage.local.AppDatabase
-import com.example.smartpantry.storage.local.Recipe_IngredientDao
 import com.example.smartpantry.storage.local.saveImageToInternalStorage
 import com.example.smartpantry.storage.local.toEntity
 import com.example.smartpantry.storage.local.toModel
 import com.example.smartpantry.storage.remote.createRecipe
 import com.example.smartpantry.storage.remote.createRecipeIngredients
 import com.example.smartpantry.storage.remote.getRecipes
+import com.example.smartpantry.storage.remote.supabase
 import com.example.smartpantry.storage.remote.uploadRecipeImage
+import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -51,8 +52,8 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
     private val _uiState = MutableStateFlow(CreateRecipeUiState())
     val uiState: StateFlow<CreateRecipeUiState> = _uiState.asStateFlow()
 
-    private var lastSyncTime = 0L
-    private val syncIntervalMs = 5 * 60 * 1000L
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     init {
         // Observe local database
@@ -61,11 +62,11 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                 _recipes.value = entities.map { it.toModel() }
             }
         }
-
-        syncPendingImages()
+        // Sync on launch
+        syncPendingItems()
     }
 
-    // --- Form Updaters for CreateRecipeScreen ---
+    // --- Form Updaters ---
     fun onNameChange(v: String)        = _uiState.update { it.copy(recipeName = v) }
     fun onCategoryChange(v: String)    = _uiState.update { it.copy(category = v) }
     fun onDescriptionChange(v: String) = _uiState.update { it.copy(description = v) }
@@ -74,7 +75,7 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
     fun clearError()                   = _uiState.update { it.copy(error = null) }
     fun consumeSaved()                 = _uiState.update { it.copy(saved = false) }
 
-    // --- Create Full Recipe ---
+    // --- 1. SAVE LOCALLY (Works 100% Offline) ---
     fun createFullRecipe(ingredients: List<RecipeIngredient> = emptyList()) {
         val s = _uiState.value
         if (s.recipeName.isBlank() || s.isSaving) return
@@ -83,7 +84,10 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
 
         viewModelScope.launch {
             try {
-                // 1. Save Image Locally
+                val currentUserId = supabase.auth.currentUserOrNull()?.id
+                    ?: "facad5cd-98f6-4d8a-b4b5-cf13f0515e0e"
+
+                // Save Image Locally
                 val localPath = s.imagePath?.let { path ->
                     withContext(Dispatchers.IO) {
                         try {
@@ -96,19 +100,7 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                     }
                 }
 
-                // 2. Upload Image Remotely (Fails silently if offline)
-                val remoteUrl = localPath?.let { path ->
-                    withContext(Dispatchers.IO) {
-                        try {
-                            uploadRecipeImage(Uri.fromFile(File(path)), getApplication())
-                        } catch (e: Exception) {
-                            Log.e("RecipeSync", "Remote image upload failed (probably offline)", e)
-                            null
-                        }
-                    }
-                }
-
-                // 3. Build and Save Recipe Locally
+                // Build the local model
                 val newRecipe = Recipe(
                     recipeName = s.recipeName.trim(),
                     recipeCategory = s.category.takeIf { it.isNotEmpty() },
@@ -116,61 +108,37 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                     description = s.description.takeIf { it.isNotEmpty() },
                     createAt = System.currentTimeMillis(),
                     localRecipeImage = localPath,
-                    recipeImage = remoteUrl
+                    recipeImage = null,
+                    userId = currentUserId
                 )
 
                 // Save to Room
                 val localRecipeId = dao.insert(newRecipe.toEntity())
 
-                // 4. Save Recipe Remotely (Supabase)
-                var remoteRecipeId: Long? = null
-                try {
-                    val savedRemoteRecipe = createRecipe(newRecipe)
-                    remoteRecipeId = savedRemoteRecipe.recipeId
-                } catch (e: Exception) {
-                    Log.e("RecipeSync", "Supabase recipe insert failed", e)
-                }
-
-                // 5. Save Ingredients
+                // Save Ingredients to Room
                 if (ingredients.isNotEmpty()) {
-                    val finalRecipeId = remoteRecipeId ?: localRecipeId
-
-                    val ingredientsWithId = ingredients.map {
-                        it.copy(recipeId = finalRecipeId)
-                    }
-
-                    // Save Locally
+                    val ingredientsWithId = ingredients.map { it.copy(recipeId = localRecipeId) }
                     ingredientDao.insertAll(ingredientsWithId.map { it.toEntity() })
-
-                    // Save Remotely
-                    if (remoteRecipeId != null) {
-                        try {
-                            createRecipeIngredients(ingredientsWithId)
-                        } catch (e: Exception) {
-                            Log.e("RecipeSync", "Supabase ingredients insert failed", e)
-                        }
-                    }
                 }
 
-                // 6. Reset UI
+                // Reset UI immediately
                 _uiState.update { it.copy(isSaving = false, saved = true) }
                 yield()
                 _uiState.update {
-                    it.copy(
-                        recipeName = "", category = "", description = "",
-                        isVegan = false, imagePath = null
-                    )
+                    it.copy(recipeName = "", category = "", description = "", isVegan = false, imagePath = null)
                 }
+
+                // Upload to Supabase in background
+                uploadRecipeToSupabase(localRecipeId)
 
             } catch (e: Exception) {
                 Log.e("RecipeSync", "Save failed", e)
-                _uiState.update {
-                    it.copy(isSaving = false, error = "Failed to save: ${e.message}")
-                }
+                _uiState.update { it.copy(isSaving = false, error = "Failed to save: ${e.message}") }
             }
         }
     }
 
+    // --- 2. BACKGROUND UPLOAD ---
     private fun uploadRecipeToSupabase(localRecipeId: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -191,24 +159,22 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                 val savedRemoteRecipe = createRecipe(updatedModel)
                 val remoteId = savedRemoteRecipe.recipeId ?: return@launch
 
+                // Push ingredients to Supabase
                 val localIngredients = ingredientDao.getIngredientsForRecipe(localRecipeId).first()
                 if (localIngredients.isNotEmpty()) {
                     val remoteIngredients = localIngredients.map { entity ->
-                        entity.toModel().copy(
-                            id = null,
-                            recipeId = remoteId
-                        )
+                        entity.toModel().copy(id = null, recipeId = remoteId)
                     }
                     createRecipeIngredients(remoteIngredients)
                 }
             } catch (e: Exception) {
-                Log.e("RecipeSync", "Background sync failed (offline)", e)
+                Log.e("RecipeSync", "Background upload failed (probably offline)", e)
             }
         }
     }
 
-    // 👇 ADDED: Finds offline recipes and triggers the upload
-    fun syncPendingImages() {
+    // --- 3. AUTO SYNC MISSING IMAGES ---
+    fun syncPendingItems() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val allRecipes = dao.observeAll().first()
@@ -222,19 +188,19 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // --- 4. REFRESH FROM SUPABASE ---
     fun refreshRecipes(force: Boolean = false) {
-        val now = System.currentTimeMillis()
-        if (!force && (now - lastSyncTime) < syncIntervalMs) return
-
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isLoading.value = true
             try {
                 val remote = getRecipes()
                 if (remote.isNotEmpty()) {
                     dao.insertAll(remote.map { it.toEntity() })
                 }
-                lastSyncTime = System.currentTimeMillis()
             } catch (e: Exception) {
                 Log.e("RecipeSync", "Refresh failed", e)
+            } finally {
+                _isLoading.value = false
             }
         }
     }

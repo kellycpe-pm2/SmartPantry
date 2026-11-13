@@ -50,8 +50,6 @@ fun AddInventoryFlowScreen(
     val filteredIngredients = allIngredients.filter { it.ingredientName.contains(searchQuery, ignoreCase = true) }
     val exactMatchExists = allIngredients.any { it.ingredientName.equals(searchQuery, ignoreCase = true) }
 
-    // 👇 GET THE REAL USER ID FROM SUPABASE AUTH
-    // If the user is not logged in, it uses a test UUID so you can still test the flow
     val currentUserId: String = supabase.auth.currentUserOrNull()?.id
         ?: "facad5cd-98f6-4d8a-b4b5-cf13f0515e0e"
 

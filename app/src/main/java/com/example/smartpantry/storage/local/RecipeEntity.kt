@@ -13,7 +13,8 @@ data class RecipeEntity(
     val description: String?,
     val createAt: Long,
     val localRecipeImage: String?,
-    val recipeImage: String?
+    val recipeImage: String?,
+    val userId: String?
 )
 
 fun RecipeEntity.toModel() = Recipe(
@@ -24,7 +25,8 @@ fun RecipeEntity.toModel() = Recipe(
     description = description,
     createAt = createAt,
     localRecipeImage = localRecipeImage,
-    recipeImage = recipeImage
+    recipeImage = recipeImage,
+    userId = userId
 )
 
 fun Recipe.toEntity() = RecipeEntity(
@@ -35,5 +37,6 @@ fun Recipe.toEntity() = RecipeEntity(
     description = description,
     createAt = createAt ?: System.currentTimeMillis(),
     localRecipeImage = localRecipeImage,
-    recipeImage = recipeImage
+    recipeImage = recipeImage,
+    userId = userId
 )

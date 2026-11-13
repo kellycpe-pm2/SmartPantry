@@ -12,5 +12,7 @@ data class Recipe(
     val description: String? = null,
     @SerialName("create_at") val createAt: Long? = null,
     @SerialName("local_recipe_image") val localRecipeImage: String? = null,
-    @SerialName("recipe_image") val recipeImage: String? = null
+    @SerialName("recipe_image") val recipeImage: String? = null,
+    @SerialName("userId") val userId: String? = null
+
 )
