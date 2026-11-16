@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.smartpantry.Screen.Profile.ProfileRepository
 import com.example.smartpantry.model.User
+import com.example.smartpantry.storage.remote.supabase
+import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -13,20 +15,11 @@ class ProfileViewModel : ViewModel() {
     private val _profile = MutableStateFlow<User?>(null)
     val profile: StateFlow<User?> = _profile
 
-    private val _isLoading = MutableStateFlow(true)
-    val isLoading: StateFlow<Boolean> = _isLoading
-
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error
 
     init {
-        viewModelScope.launch {
-            Log.d("ProfileViewModel", "start")
-            runCatching { ProfileRepository.signIn("maya.test@example.com", "123456") }
-                .onSuccess { Log.d("ProfileViewModel", "signIn OK") }
-                .onFailure { Log.e("ProfileViewModel", "signIn failed", it) }
-            refresh()
-        }
+        refresh()
     }
 
     fun refresh() {
@@ -34,7 +27,10 @@ class ProfileViewModel : ViewModel() {
             Log.d("ProfileViewModel", "loading profile")
             runCatching { ProfileRepository.loadMyProfile() }
                 .onSuccess { Log.d("ProfileViewModel", "loaded ${it.email}"); _profile.value = it }
-                .onFailure { Log.e("ProfileViewModel", "Could not load profile", it) }
+                .onFailure {
+                    Log.e("ProfileViewModel", "Could not load profile", it)
+                    _error.value = "Could not load your profile."
+                }//offline and online
         }
     }
 
@@ -59,6 +55,7 @@ class ProfileViewModel : ViewModel() {
     fun logout() {
         viewModelScope.launch {
             runCatching { ProfileRepository.signOut() }
+                .onFailure { runCatching { supabase.auth.clearSession() } }  // wipe the local session anyway
             _profile.value = null
             _error.value = null
         }

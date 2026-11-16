@@ -2,9 +2,11 @@ package com.example.smartpantry.Screen.Profile
 
 import com.example.smartpantry.storage.remote.supabase
 import com.example.smartpantry.model.User
+import io.github.jan.supabase.auth.OtpType
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.postgrest.from
+import io.github.jan.supabase.postgrest.postgrest
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.buildJsonObject
@@ -14,7 +16,7 @@ import kotlinx.serialization.json.put
 private data class ProfileUpdate(
     @SerialName("display_name") val displayName: String,
     @SerialName("phone_no") val phoneNo: String,
-    @SerialName("household_size") val householdSize: Int? = null,
+    @SerialName("household_size") val householdSize: Int,
     @SerialName("date_of_birth") val dateOfBirth: String?
 )
 
@@ -31,17 +33,33 @@ object ProfileRepository {
         currentAuthId = supabase.auth.currentUserOrNull()?.id
     }
 
-    suspend fun signUp(name: String, phone: String, email: String, password: String) {
-        supabase.auth.signUpWith(Email) {
+    suspend fun signUp(email: String, password: String) {
+        val info = supabase.auth.signUpWith(Email) {
             this.email = email
             this.password = password
-            data = buildJsonObject {
-                put("display_name", name)
-                put("phone_no", phone)
-            }
         }
+        // With "Confirm email" on, Supabase hides existing emails: no error, but no identities
+        if (info != null && info.identities.isNullOrEmpty()) error("already registered")
+    }
+
+    suspend fun completeProfile(name: String, phone: String, householdSize: Int, dateOfBirth: String?) {
+        val id = supabase.auth.currentUserOrNull()?.id ?: error("Not signed in")
+        supabase.from(TABLE).update(
+            ProfileUpdate(name, phone, householdSize, dateOfBirth)
+        ) { filter { eq("id", id) } }
+    }
+
+    suspend fun verifySignUpCode(email: String, code: String) {
+        supabase.auth.verifyEmailOtp(type = OtpType.Email.SIGNUP, email = email, token = code)
         currentAuthId = supabase.auth.currentUserOrNull()?.id
     }
+    suspend fun resendSignUpCode(email: String) {
+        supabase.auth.resendEmail(OtpType.Email.SIGNUP, email)
+    }
+
+    suspend fun emailExists(email: String): Boolean =
+        supabase.postgrest.rpc("email_exists", buildJsonObject { put("check_email", email) })
+            .decodeAs<Boolean>()
 
     suspend fun signOut() {
         currentAuthId = null
@@ -54,6 +72,15 @@ object ProfileRepository {
 
     suspend fun changePassword(newPassword: String) {
         supabase.auth.updateUser { password = newPassword }
+    }
+
+    suspend fun sendResetCode(email: String) {
+        supabase.auth.resetPasswordForEmail(email)
+    }
+
+    suspend fun verifyResetCode(email: String, code: String) {
+        supabase.auth.verifyEmailOtp(type = OtpType.Email.RECOVERY, email = email, token = code)
+        currentAuthId = supabase.auth.currentUserOrNull()?.id
     }
 
     suspend fun loadMyProfile(): User {
