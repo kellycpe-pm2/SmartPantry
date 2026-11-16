@@ -44,7 +44,7 @@ import com.example.smartpantry.ui.home.UserDashboardScreen
 import com.example.smartpantry.viewmodel.IngredientUserViewModel
 import com.example.smartpantry.viewmodel.IngredientViewModel
 import com.example.smartpantry.viewmodel.recipe_vm
-
+import com.example.smartpantry.ShoppingListScreen
 data class BottomNavItem(
     val route: String,
     val label: String,
@@ -183,7 +183,9 @@ fun AppNavHost(
             }
 
             composable("favourites")    { UserDashboardScreen() }
-            composable("shopping_list") { UserDashboardScreen() }
+            composable("shopping_list") {
+                ShoppingListScreen(onBack = { navController.popBackStack() })
+            }
 
             // --- ADD INGREDIENT ---
             composable("add") {
