@@ -14,9 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.example.smartpantry.ui.theme.SmartPantryTheme
 import com.example.smartpantry.viewmodel.AuthViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
