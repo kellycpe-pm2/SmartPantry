@@ -50,7 +50,7 @@ fun AccountSecurityScreen(
 
     val profileRows = listOf(
         FieldRow("Name", current.displayName, Field.NAME),
-        FieldRow("Household size", current.householdSize?.toString() ?: "Not set", Field.HOUSEHOLD),
+        FieldRow("Household size", current.householdSize.toString(), Field.HOUSEHOLD),
         FieldRow("Date of birth", current.dateOfBirth ?: "Not set", Field.DOB),
     )
 
@@ -132,11 +132,11 @@ fun AccountSecurityScreen(
         )
         Field.HOUSEHOLD -> TextFieldDialog(
             title = "Household size",
-            initial = current.householdSize?.toString() ?: "",
+            initial = current.householdSize.toString(),
             keyboardType = KeyboardType.Number,
             validate = { if (it.isNotBlank() && it.toIntOrNull() !in 1..20) "Enter a number from 1 to 20" else null },
             onDismiss = { editing = null },
-            onConfirm = { save(current.copy(householdSize = it.toIntOrNull())) }
+            onConfirm = { save(current.copy(householdSize = it.toInt())) }
         )
         null -> Unit
     }
@@ -245,44 +245,7 @@ private fun TextFieldDialog(
     )
 }
 
-@Composable
-private fun ChoiceDialog(
-    title: String,
-    options: List<String>,
-    selected: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    var choice by remember { mutableStateOf(selected) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column {
-                options.forEach { option ->
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .selectable(
-                                selected = choice == option,
-                                onClick = { choice = option },
-                                role = Role.RadioButton
-                            )
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(selected = choice == option, onClick = null)
-                        Spacer(Modifier.width(12.dp))
-                        Text(option)
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = { onConfirm(choice) }) { Text("Save") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
-}
 
 // ---------- Validation (birth date will prob change later to maybe calander)----------
 private fun dobError(input: String): String? {
@@ -292,36 +255,3 @@ private fun dobError(input: String): String? {
     val date = runCatching { format.parse(input) }.getOrNull() ?: return "Not a valid date"
     return if (date.after(Date())) "Date cannot be in the future" else null
 }
-
-/*
-// ---------- Previews (YOUR theme, light + dark) ----------
-@Preview(showBackground = true, name = "Light")
-@Composable
-private fun AccountSecurityLightPreview() {
-    SmartPantryTheme(darkTheme = false) {
-        AccountSecurityPreviewContent()
-    }
-}
-
-@Preview(showBackground = true, name = "Dark")
-@Composable
-private fun AccountSecurityDarkPreview() {
-    SmartPantryTheme(darkTheme = true) {
-        AccountSecurityPreviewContent()
-    }
-}
-
-@Composable
-private fun AccountSecurityPreviewContent() {
-    AccountSecurityScreen(
-        profile = User(
-            userCode = "SP01001",
-            displayName = "Maya Patel", email = "maya.patel@email.com",
-            phoneNo = "0123456789",
-            role = "user", memberSince = "September 2026",
-            gender = "Female", dateOfBirth = "2000-05-21"
-        ),
-        onSave = {}, onChangeEmail = {}, onChangePassword = {}, onDeleteAccount = {}, onBack = {}
-    )
-}
- */

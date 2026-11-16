@@ -24,26 +24,30 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.example.models.IngredientUser
 import com.example.smartpantry.R
+import com.example.smartpantry.Screen.Auth.CreateAccountScreen
+import com.example.smartpantry.Screen.Auth.LoginScreen
+import com.example.smartpantry.Screen.Auth.ResetPasswordScreen
 import com.example.smartpantry.Screen.IngredientUI.CreateIngredientScreen
 import com.example.smartpantry.Screen.Profile.AccountSecurityScreen
 import com.example.smartpantry.Screen.Profile.ProfileScreen
 import com.example.smartpantry.viewmodel.ProfileViewModel
-import com.example.smartpantry.Screen.IngredientUI.PantryScreen
 import com.example.smartpantry.Screen.IngredientUI.RecipeScreen
 import com.example.smartpantry.Screen.InventoryUI.AddInventoryFlowScreen
 import com.example.smartpantry.Screen.InventoryUI.InventoryScreen
 import com.example.smartpantry.Screen.RecipeUI.CreateRecipeScreen
+import com.example.smartpantry.storage.remote.supabase
 import com.example.smartpantry.ui.home.UserDashboardScreen
+import com.example.smartpantry.viewmodel.AuthViewModel
 import com.example.smartpantry.viewmodel.IngredientUserViewModel
 import com.example.smartpantry.viewmodel.IngredientViewModel
 import com.example.smartpantry.viewmodel.recipe_vm
+import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.status.SessionStatus
 
 data class BottomNavItem(
     val route: String,
@@ -53,6 +57,7 @@ data class BottomNavItem(
 
 @Composable
 fun AppNavHost(
+    startRoute: String,
     navController: NavHostController = rememberNavController()
 ) {
     val items = listOf(
@@ -79,8 +84,11 @@ fun AppNavHost(
     )
 
     // ViewModels
+    val authViewModel: AuthViewModel = viewModel()
+
     val profileViewModel: ProfileViewModel = viewModel()
     val profile by profileViewModel.profile.collectAsState()
+
 
     val ingredientVm: IngredientViewModel = viewModel()
     val recipeVm: recipe_vm = viewModel()
@@ -92,14 +100,18 @@ fun AppNavHost(
 
     val bottomNavRoutes = listOf("home", "pantry", "recipes", "records", "profile")
 
-    LaunchedEffect(navController) {
-        navController.currentBackStackEntryFlow.collect { entry ->
-            if (entry == null) {
-                navController.navigate("home") {
-                    popUpTo(0) { inclusive = true }
-                    launchSingleTop = true
+    val sessionStatus by supabase.auth.sessionStatus.collectAsState()
+
+    LaunchedEffect(sessionStatus) {
+        when (sessionStatus) {
+            is SessionStatus.Authenticated -> profileViewModel.refresh()
+            is SessionStatus.NotAuthenticated -> {
+                val route = navController.currentBackStackEntry?.destination?.route
+                if (route !in listOf("login", "register", "forgot_password")) {
+                    navController.navigate("login") { popUpTo(0) { inclusive = true } }
                 }
             }
+            else -> {}
         }
     }
 
@@ -112,9 +124,7 @@ fun AppNavHost(
                     onTabSelected = { route ->
                         navController.navigate(route) {
                             launchSingleTop = true
-                            popUpTo(navController.graph.findStartDestination().id) {
-                                saveState = true
-                            }
+                            popUpTo("home") { saveState = true }
                             restoreState = true
                         }
                     },
@@ -131,9 +141,53 @@ fun AppNavHost(
     ) { padding ->
         NavHost(
             navController = navController,
-            startDestination = "home",
+            startDestination = startRoute,
             modifier = Modifier.padding(padding)
         ) {
+            composable("login") {
+                LaunchedEffect(Unit) { authViewModel.clearError() }
+                LoginScreen(
+                    vm = authViewModel,
+                    onLoggedIn = {
+                        profileViewModel.refresh()
+                        navController.navigate("home") { popUpTo("login") { inclusive = true } }
+                    },
+                    onCreateAccount = { authViewModel.resetRegistration(); navController.navigate("register") },
+                    onForgotPassword = { navController.navigate("forgot_password") }
+                )
+            }
+            composable("forgot_password") {
+                LaunchedEffect(Unit) { authViewModel.startReset() }
+                ResetPasswordScreen(
+                    vm = authViewModel,
+                    loggedIn = false,
+                    onBack = { navController.popBackStack() },
+                    onFinished = { navController.navigate("login") { popUpTo(0) { inclusive = true } } }
+                )
+            }
+
+            composable("change_password") {
+                val email = profile?.email
+                LaunchedEffect(email) { if (email != null) authViewModel.startReset(knownEmail = email) }
+                ResetPasswordScreen(
+                    vm = authViewModel,
+                    loggedIn = true,
+                    onBack = { navController.popBackStack() },
+                    onFinished = { navController.popBackStack() }
+                )
+            }
+            composable("register") {
+                LaunchedEffect(Unit) { authViewModel.clearError() }
+                CreateAccountScreen(
+                    vm = authViewModel,
+                    onVerified = {
+                        profileViewModel.refresh()
+                        navController.navigate("home") { popUpTo(0) { inclusive = true } }
+                    },
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
             composable("home")    { UserDashboardScreen() }
 
 
@@ -157,7 +211,7 @@ fun AppNavHost(
                 } else {
                     ProfileScreen(
                         profile = p,
-                        onChangePassword = { /* TODO */ },
+                        onChangePassword = { navController.navigate("change_password") },
                         onAccountSecurity = { navController.navigate("account_security") },
                         onMyFavourite = { navController.navigate("favourites") },
                         onShoppingList = { navController.navigate("shopping_list") },
@@ -175,7 +229,7 @@ fun AppNavHost(
                         profile = p,
                         onSave = { profileViewModel.save(it) },
                         onChangeEmail = { newEmail -> profileViewModel.changeEmail(newEmail) },
-                        onChangePassword = { /* TODO */ },
+                        onChangePassword = { navController.navigate("change_password") },
                         onDeleteAccount = { /* TODO */ },
                         onBack = { navController.popBackStack() }
                     )
@@ -238,7 +292,17 @@ fun AppNavHost(
         }
     }
 }
-
+@Composable
+fun AppRoot() {
+    val status by supabase.auth.sessionStatus.collectAsState()
+    when (status) {
+        is SessionStatus.Initializing -> LoadingBox()
+        else -> {
+            val start = remember { if (status is SessionStatus.Authenticated) "home" else "login" }
+            AppNavHost(startRoute = start)
+        }
+    }
+}
 @Composable
 private fun LoadingBox() {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

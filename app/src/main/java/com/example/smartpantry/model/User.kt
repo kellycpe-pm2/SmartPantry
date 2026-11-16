@@ -12,6 +12,7 @@ data class User(
     @SerialName("phone_no") val phoneNo: String,
     val role: String,
     @SerialName("created_at") val memberSince: String,
-    @SerialName("household_size") val householdSize: Int? = null,
+    @SerialName("household_size") val householdSize: Int = 1,
+    @SerialName("is_active") val isActive: Boolean = true,
     @SerialName("date_of_birth") val dateOfBirth: String? = null
 )

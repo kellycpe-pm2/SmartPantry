@@ -116,7 +116,7 @@ private fun DetailsCard(profile: User) {
             if (isAdmin) {
                 InfoRow("Role", "Admin")
             } else {
-                InfoRow("Household size", profile.householdSize?.toString() ?: "Not set")
+                InfoRow("Household size", profile.householdSize.toString())
                 InfoRow("Date of birth", profile.dateOfBirth ?: "Not set")
             }
         }
@@ -153,44 +153,3 @@ private fun formatMemberSince(raw: String): String =
         val parsed = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(raw.take(10))!!
         SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(parsed)
     }.getOrDefault(raw)
-
-/*
-// ---------- Previews (uses the colors from theme) ----------
-@Preview(showBackground = true, name = "User")
-@Composable
-private fun UserPreview() {
-    SmartPantryTheme {
-        ProfileScreen(
-            profile = User(
-                userCode = "SP01001",
-                displayName = "Maya Patel", email = "maya.patel@gmail.com",
-                phoneNo = "0123456789",
-                role = "user", memberSince = "September 2026",
-                gender = "Female", dateOfBirth = "2000-05-21"
-            ),
-            onChangePassword = {}, onAccountSecurity = {},
-            onMyFavourite = {}, onShoppingList = {},
-            onLogout = {}
-        )
-    }
-}
-
-@Preview(showBackground = true, name = "Admin")
-@Composable
-private fun AdminPreview() {
-    SmartPantryTheme {
-        ProfileScreen(
-            profile = User(
-                userCode = "SP01001",
-                displayName = "Admin", email = "admin@gmail.com",
-                phoneNo = "0198765432",
-                role = "admin", memberSince = "September 2026"
-            ),
-            onChangePassword = {}, onAccountSecurity = {},
-            onMyFavourite = {}, onShoppingList = {},
-            onLogout = {}
-        )
-    }
-}
-
- */
