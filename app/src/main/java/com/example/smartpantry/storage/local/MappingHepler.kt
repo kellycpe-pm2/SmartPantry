@@ -5,29 +5,33 @@ import com.example.smartpantry.model.Ingredient
 fun IngredientEntity.toModel() = Ingredient(
     ingredientId = id,
     ingredientName = ingredientName,
-    category = category,
     weight = weight,
     unit = unit,
-    description = description,
     image = image,
-    localImagePath = localImagePath, 
+    localImagePath = localImagePath,
+    description = description,
+    category = category,
     minExpiredDuration = minExpiredDuration,
     maxExpiredDuration = maxExpiredDuration,
     createAt = createAt,
     updateAt = updateAt,
+    isPublish = isPublish,
+    userId = userId
 )
 
 fun Ingredient.toEntity() = IngredientEntity(
     id = ingredientId ?: 0,
     ingredientName = ingredientName,
-    category = category,
     weight = weight,
     unit = unit,
-    description = description,
     image = image,
     localImagePath = localImagePath,
+    description = description,
+    category = category,
     minExpiredDuration = minExpiredDuration,
     maxExpiredDuration = maxExpiredDuration,
-    createAt = createAt ?: System.currentTimeMillis(),
-    updateAt = updateAt ?: System.currentTimeMillis(),
+    createAt = createAt,
+    updateAt = updateAt,
+    isPublish = isPublish,
+    userId = userId
 )

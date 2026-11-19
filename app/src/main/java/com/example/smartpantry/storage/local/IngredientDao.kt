@@ -11,11 +11,17 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface IngredientDao {
 
-    @Query("SELECT * FROM ingredient ORDER BY createAt DESC")
+    @Query("SELECT * FROM ingredient ORDER BY id DESC")
     fun observeAll(): Flow<List<IngredientEntity>>
 
     @Query("SELECT * FROM ingredient WHERE id = :id")
     suspend fun getById(id: Long): IngredientEntity?
+
+    @Query("SELECT * FROM ingredient WHERE ingredientName LIKE '%' || :query || '%'")
+    suspend fun searchByName(query: String): List<IngredientEntity>
+
+    @Query("SELECT * FROM ingredient WHERE category = :category")
+    suspend fun getByCategory(category: String): List<IngredientEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entity: IngredientEntity): Long

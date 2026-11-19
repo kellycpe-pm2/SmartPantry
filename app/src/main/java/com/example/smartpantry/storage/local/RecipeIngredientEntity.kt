@@ -13,7 +13,6 @@ data class Recipe_IngredientEntity(
     val unit: String?
 )
 
-// 👇 MUST start with Recipe_IngredientEntity (Room) and return RecipeIngredient (Model)
 fun Recipe_IngredientEntity.toModel() = RecipeIngredient(
     id = id,
     ingredientId = ingredientId,
@@ -22,7 +21,6 @@ fun Recipe_IngredientEntity.toModel() = RecipeIngredient(
     unit = unit
 )
 
-// 👇 MUST start with RecipeIngredient (Model) and return Recipe_IngredientEntity (Room)
 fun RecipeIngredient.toEntity() = Recipe_IngredientEntity(
     id = id ?: 0,
     ingredientId = ingredientId,

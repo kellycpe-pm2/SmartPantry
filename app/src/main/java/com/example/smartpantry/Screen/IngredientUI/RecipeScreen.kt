@@ -1,12 +1,14 @@
 package com.example.smartpantry.Screen.IngredientUI
 
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -28,7 +30,8 @@ import java.io.File
 @Composable
 fun RecipeScreen(
     vm: recipe_vm,
-    onAddRecipeClick: () -> Unit
+    onAddRecipeClick: () -> Unit,
+    onRecipeClick: (Long) -> Unit
 ) {
     val items by vm.recipes.collectAsState()
     val scheme = MaterialTheme.colorScheme
@@ -86,7 +89,11 @@ fun RecipeScreen(
                     contentPadding = PaddingValues(vertical = 12.dp)
                 ) {
                     items(items, key = { it.recipeId ?: 0L }) { item ->
-                        RecipeRow(item)
+                        RecipeRow(
+                            item = item,
+                            onClick = { item.recipeId?.let(onRecipeClick) },
+                            onDelete = { item.recipeId?.let(vm::deleteRecipe) }
+                        )
                     }
                 }
             }
@@ -94,65 +101,94 @@ fun RecipeScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RecipeRow(item: Recipe) {
+private fun RecipeRow(
+    item: Recipe,
+    onClick: () -> Unit,
+    onDelete: () -> Unit
+) {
     val scheme = MaterialTheme.colorScheme
 
-    // Smart Image Logic (Local first, then Remote)
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = {
+            if (it == SwipeToDismissBoxValue.EndToStart) {
+                onDelete()
+                true
+            } else false
+        }
+    )
+
     val localFile: String? = item.localRecipeImage
     val remoteUrl: String? = item.recipeImage
-    val imageToLoad = if (localFile != null && localFile.isNotEmpty() && File(localFile).exists()) {
+    val imageToLoad = if (!localFile.isNullOrEmpty() && File(localFile).exists()) {
         File(localFile)
     } else {
         remoteUrl
     }
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(scheme.surfaceVariant)
-            .padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(64.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(scheme.primaryContainer),
-            contentAlignment = Alignment.Center
-        ) {
-            if (imageToLoad != null) {
-                AsyncImage(
-                    model = imageToLoad,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                Icon(Icons.Default.Restaurant, contentDescription = null, tint = scheme.primary)
+    SwipeToDismissBox(
+        state = dismissState,
+        enableDismissFromStartToEnd = false,
+        backgroundContent = {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(scheme.errorContainer)
+                    .padding(horizontal = 20.dp),
+                contentAlignment = Alignment.CenterEnd
+            ) {
+                Icon(Icons.Default.Delete, "Delete", tint = scheme.onErrorContainer)
             }
         }
-
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                item.recipeName,
-                fontWeight = FontWeight.SemiBold,
-                color = scheme.onBackground
-            )
-
-            val subtitle = buildString {
-                if (!item.recipeCategory.isNullOrBlank()) append(item.recipeCategory)
-                if (item.isVegan) {
-                    if (isNotEmpty()) append(" • ")
-                    append("Vegan 🌱")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(scheme.surfaceVariant)
+                .clickable(onClick = onClick)
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(scheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                if (imageToLoad != null) {
+                    AsyncImage(
+                        model = imageToLoad,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Icon(Icons.Default.Restaurant, contentDescription = null, tint = scheme.primary)
                 }
             }
 
-            if (subtitle.isNotEmpty()) {
-                Spacer(Modifier.height(2.dp))
-                Text(subtitle, fontSize = 12.sp, color = scheme.onSurfaceVariant)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    item.recipeName,
+                    fontWeight = FontWeight.SemiBold,
+                    color = scheme.onBackground
+                )
+                val subtitle = buildString {
+                    if (!item.recipeCategory.isNullOrBlank()) append(item.recipeCategory)
+                    if (item.isVegan) {
+                        if (isNotEmpty()) append(" • ")
+                        append("Vegan 🌱")
+                    }
+                }
+                if (subtitle.isNotEmpty()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(subtitle, fontSize = 12.sp, color = scheme.onSurfaceVariant)
+                }
             }
         }
     }

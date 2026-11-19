@@ -24,20 +24,24 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.example.smartpantry.R
 import com.example.smartpantry.Screen.Auth.CreateAccountScreen
 import com.example.smartpantry.Screen.Auth.LoginScreen
 import com.example.smartpantry.Screen.Auth.ResetPasswordScreen
 import com.example.smartpantry.Screen.IngredientUI.CreateIngredientScreen
+import com.example.smartpantry.Screen.IngredientUI.EditIngredientScreen
 import com.example.smartpantry.Screen.IngredientUI.EditInventoryScreen
+import com.example.smartpantry.Screen.IngredientUI.EditRecipeScreen
+import com.example.smartpantry.Screen.IngredientUI.RecipeScreen
 import com.example.smartpantry.Screen.Profile.AccountSecurityScreen
 import com.example.smartpantry.Screen.Profile.ProfileScreen
 import com.example.smartpantry.viewmodel.ProfileViewModel
-import com.example.smartpantry.Screen.IngredientUI.RecipeScreen
 import com.example.smartpantry.Screen.InventoryUI.AddInventoryFlowScreen
 import com.example.smartpantry.Screen.InventoryUI.InventoryScreen
 import com.example.smartpantry.Screen.RecipeUI.CreateRecipeScreen
@@ -195,10 +199,21 @@ fun AppNavHost(
             composable("pantry")  {
                 InventoryScreen(
                 onAddInventoryClick = { navController.navigate("add_ingredient") },
+                    onCreateIngredientClick = {navController.navigate("add")},
+                    onEditIngredientClick = { id -> navController.navigate("edit_ingredient/$id") },
                 vm = ingredientUserVm,
                 ingredientVm = ingredientVm,
                 onEditClick = { id -> navController.navigate("edit_inventory/$id") }
             )
+            }
+
+
+            composable("edit_ingredient/{ingredientId}") { entry ->
+                val id = entry.arguments?.getString("ingredientId")?.toLongOrNull() ?: 0L
+                EditIngredientScreen(
+                    ingredientId = id,
+                    onBackClick = { navController.popBackStack() }
+                )
             }
 
             composable("edit_inventory/{itemId}") { backStackEntry ->
@@ -214,8 +229,23 @@ fun AppNavHost(
 
 
             composable("recipes") {
-                RecipeScreen(recipeVm,onAddRecipeClick = {navController.navigate("create_recipe")})
+                RecipeScreen(
+                    vm = recipeVm,
+                    onAddRecipeClick = { navController.navigate("create_recipe") },
+                    onRecipeClick = { id -> navController.navigate("editRecipe/$id") }
+                )
             }
+
+            composable(
+                route = "editRecipe/{id}",
+                arguments = listOf(navArgument("id") { type = NavType.LongType })
+            ) { entry ->
+                EditRecipeScreen(
+                    recipeId = entry.arguments!!.getLong("id"),
+                    onBackClick = { navController.popBackStack() }
+                )
+            }
+
 
             composable("records") { UserDashboardScreen() }
 
