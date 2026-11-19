@@ -21,6 +21,44 @@ suspend fun getRecipes(): List<Recipe> =
         supabase.from("Recipe").select().decodeList<Recipe>()
     }
 
+
+suspend fun getRecipeById(id: Long): Recipe? =
+    withContext(Dispatchers.IO) {
+        try {
+            supabase.from("Recipe")
+                .select { filter { eq("recipeId", id) } }
+                .decodeSingleOrNull<Recipe>()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+suspend fun updateRecipe(id: Long, recipe: Recipe): Recipe? =
+    withContext(Dispatchers.IO) {
+        try {
+            supabase.from("Recipe")
+                .update(recipe) {
+                    filter { eq("recipeId", id) }
+                    select()
+                }
+                .decodeSingleOrNull<Recipe>()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+suspend fun deleteRecipe(id: Long): Boolean =
+    withContext(Dispatchers.IO) {
+        try {
+            supabase.from("Recipe").delete {
+                filter { eq("recipeId", id) }
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
 suspend fun uploadRecipeImage(uri: Uri, context: Context): String? = withContext(Dispatchers.IO) {
     return@withContext try {
         val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return@withContext null

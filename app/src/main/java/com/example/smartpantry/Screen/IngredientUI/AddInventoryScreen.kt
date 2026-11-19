@@ -1,4 +1,3 @@
-@file:JvmName("AddInventoryScreenKt")
 
 package com.example.smartpantry.Screen.InventoryUI
 

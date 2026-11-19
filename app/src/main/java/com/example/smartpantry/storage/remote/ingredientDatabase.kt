@@ -33,7 +33,48 @@ suspend fun getIngredients(): List<Ingredient> =
             .decodeList<Ingredient>()
     }
 
+suspend fun getIngredientById(id: Long): Ingredient? =
+    withContext(Dispatchers.IO) {
+        supabase
+            .from("ingredient")
+            .select {
+                filter {
+                    eq("ingredientId", id)
+                }
+            }
+            .decodeSingleOrNull<Ingredient>()
+    }
 
+
+suspend fun updateIngredient(id: Long, ingredient: Ingredient): Ingredient? =
+    withContext(Dispatchers.IO) {
+        supabase
+            .from("ingredient")
+            .update(ingredient) {
+                filter {
+                    eq("ingredientId", id)
+                }
+                select()
+            }
+            .decodeSingleOrNull<Ingredient>()
+    }
+
+suspend fun deleteIngredient(id: Long): Boolean =
+    withContext(Dispatchers.IO) {
+        try {
+            supabase
+                .from("ingredient")
+                .delete {
+                    filter {
+                        eq("ingredientId", id)
+                    }
+                }
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete ingredient", e)
+            false
+        }
+    }
 
 
 suspend fun downloadImageToFiles(context: Context, url: String): String? = withContext(Dispatchers.IO) {

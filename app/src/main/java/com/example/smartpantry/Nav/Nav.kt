@@ -33,6 +33,7 @@ import com.example.smartpantry.Screen.Auth.CreateAccountScreen
 import com.example.smartpantry.Screen.Auth.LoginScreen
 import com.example.smartpantry.Screen.Auth.ResetPasswordScreen
 import com.example.smartpantry.Screen.IngredientUI.CreateIngredientScreen
+import com.example.smartpantry.Screen.IngredientUI.EditInventoryScreen
 import com.example.smartpantry.Screen.Profile.AccountSecurityScreen
 import com.example.smartpantry.Screen.Profile.ProfileScreen
 import com.example.smartpantry.viewmodel.ProfileViewModel
@@ -192,8 +193,22 @@ fun AppNavHost(
 
 
             composable("pantry")  {
-                InventoryScreen(onAddInventoryClick = {navController.navigate("add_ingredient")},ingredientUserVm, ingredientVm)
+                InventoryScreen(
+                onAddInventoryClick = { navController.navigate("add_ingredient") },
+                vm = ingredientUserVm,
+                ingredientVm = ingredientVm,
+                onEditClick = { id -> navController.navigate("edit_inventory/$id") }
+            )
             }
+
+            composable("edit_inventory/{itemId}") { backStackEntry ->
+                val itemId = backStackEntry.arguments?.getString("itemId")?.toLongOrNull() ?: 0L
+                EditInventoryScreen(
+                    itemId = itemId,
+                    onBackClick = { navController.popBackStack() }
+                )
+            }
+
 
             // --- RECIPES TAB ---
 

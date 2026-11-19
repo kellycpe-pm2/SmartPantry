@@ -22,3 +22,43 @@ suspend fun getIngredientUsers(): List<IngredientUser> =
             emptyList()
         }
     }
+
+suspend fun getIngredientUserById(id: Long): IngredientUser? =
+    withContext(Dispatchers.IO) {
+        try {
+            supabase.from("Ingredient_User")
+                .select {
+                    filter { eq("IngredientUser_Id", id) }
+                }
+                .decodeSingleOrNull<IngredientUser>()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+suspend fun updateIngredientUser(id: Long, ingredientUser: IngredientUser): IngredientUser? =
+    withContext(Dispatchers.IO) {
+        try {
+            supabase.from("Ingredient_User")
+                .update(ingredientUser) {
+                    filter { eq("IngredientUser_Id", id) }
+                    select()
+                }
+                .decodeSingleOrNull<IngredientUser>()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+suspend fun deleteIngredientUser(id: Long): Boolean =
+    withContext(Dispatchers.IO) {
+        try {
+            supabase.from("Ingredient_User")
+                .delete {
+                    filter { eq("IngredientUser_Id", id) }
+                }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }

@@ -14,7 +14,7 @@ suspend fun createRecipeIngredients(recipeIngredients: List<RecipeIngredient>) =
                 supabase.from("Recipe_Ingredient").insert(recipeIngredients)
             }
         } catch (e: Exception) {
-            throw e
+            false
         }
     }
 
@@ -28,5 +28,35 @@ suspend fun getRecipeIngredients(recipeId: Long): List<RecipeIngredient> =
                 .decodeList<RecipeIngredient>()
         } catch (e: Exception) {
             emptyList()
+        }
+    }
+
+suspend fun updateRecipeIngredients(recipeId: Long, recipeIngredients: List<RecipeIngredient>): Boolean =
+    withContext(Dispatchers.IO) {
+        try {
+            // Step 1: Delete existing ingredients for this recipe
+            supabase.from("Recipe_Ingredient").delete {
+                filter { eq("recipeId", recipeId) }
+            }
+
+            // Step 2: Insert the new list
+            if (recipeIngredients.isNotEmpty()) {
+                supabase.from("Recipe_Ingredient").insert(recipeIngredients)
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+suspend fun deleteRecipeIngredients(recipeId: Long): Boolean =
+    withContext(Dispatchers.IO) {
+        try {
+            supabase.from("Recipe_Ingredient").delete {
+                filter { eq("recipeId", recipeId) }
+            }
+            true
+        } catch (e: Exception) {
+            false
         }
     }

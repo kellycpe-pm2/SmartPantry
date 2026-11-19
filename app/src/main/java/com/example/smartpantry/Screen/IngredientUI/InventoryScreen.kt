@@ -1,6 +1,7 @@
 package com.example.smartpantry.Screen.InventoryUI
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -8,9 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,6 +34,7 @@ import androidx.compose.ui.platform.LocalLocale
 @Composable
 fun InventoryScreen(
     onAddInventoryClick: () -> Unit,
+    onEditClick: (Long) -> Unit, // <-- Navigation callback
     vm: IngredientUserViewModel = viewModel(),
     ingredientVm: IngredientViewModel = viewModel()
 ) {
@@ -78,7 +78,7 @@ fun InventoryScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Icon(
-                        Icons.Default.Kitchen,
+                        Icons.Default.Home,
                         contentDescription = null,
                         modifier = Modifier.size(64.dp),
                         tint = scheme.primary.copy(alpha = 0.5f)
@@ -94,9 +94,21 @@ fun InventoryScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(vertical = 12.dp)
                 ) {
+                    // FIXED: Use id as key
                     items(inventory, key = { it.id ?: 0L }) { item ->
                         val ingredientInfo = availableIngredients.find { it.ingredientId == item.ingredientId }
-                        InventoryRow(item, ingredientInfo, vm)
+                        InventoryRow(
+                            item = item,
+                            ingredientInfo = ingredientInfo,
+                            onDelete = {
+                                // FIXED: Use id
+                                item.id?.let { id -> vm.deleteInventoryItem(id) }
+                            },
+                            onEdit = {
+                                // FIXED: Use id and trigger navigation
+                                item.id?.let { id -> onEditClick(id) }
+                            }
+                        )
                     }
                 }
             }
@@ -108,11 +120,11 @@ fun InventoryScreen(
 private fun InventoryRow(
     item: IngredientUser,
     ingredientInfo: Ingredient?,
-    vm: IngredientUserViewModel
+    onDelete: () -> Unit,
+    onEdit: () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
 
-    // Smart Image Logic
     val localFile: String? = ingredientInfo?.localImagePath
     val remoteUrl: String? = ingredientInfo?.image
     val imageToLoad = if (localFile != null && localFile.isNotEmpty() && File(localFile).exists()) {
@@ -121,7 +133,7 @@ private fun InventoryRow(
         remoteUrl
     }
 
-    // Expiry Date
+    // FIXED: Use Locale.getDefault() instead of LocalLocale
     val dateFormat = SimpleDateFormat("dd MMM yyyy", LocalLocale.current.platformLocale)
     val expiryString = dateFormat.format(Date(item.expiredDate))
     val timeLeft = item.expiredDate - System.currentTimeMillis()
@@ -145,6 +157,7 @@ private fun InventoryRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .background(scheme.surfaceVariant)
+            .clickable { onEdit() } // Tap row to edit
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -186,7 +199,6 @@ private fun InventoryRow(
             )
         }
 
-        // Expiry Badge
         Box(
             modifier = Modifier
                 .clip(RoundedCornerShape(8.dp))
@@ -201,7 +213,7 @@ private fun InventoryRow(
             )
         }
 
-        IconButton(onClick = { item.id?.let { vm.deleteInventoryItem(it) } }) {
+        IconButton(onClick = onDelete) {
             Icon(Icons.Default.Delete, contentDescription = "Delete", tint = scheme.error)
         }
     }
