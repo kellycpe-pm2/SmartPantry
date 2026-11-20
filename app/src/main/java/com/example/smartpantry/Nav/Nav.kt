@@ -37,7 +37,6 @@ import com.example.smartpantry.Screen.Auth.ResetPasswordScreen
 import com.example.smartpantry.Screen.IngredientUI.CreateIngredientScreen
 import com.example.smartpantry.Screen.IngredientUI.EditIngredientScreen
 import com.example.smartpantry.Screen.IngredientUI.EditInventoryScreen
-import com.example.smartpantry.Screen.IngredientUI.EditRecipeScreen
 import com.example.smartpantry.Screen.IngredientUI.RecipeScreen
 import com.example.smartpantry.Screen.Profile.AccountSecurityScreen
 import com.example.smartpantry.Screen.Profile.ProfileScreen
@@ -45,6 +44,7 @@ import com.example.smartpantry.viewmodel.ProfileViewModel
 import com.example.smartpantry.Screen.InventoryUI.AddInventoryFlowScreen
 import com.example.smartpantry.Screen.InventoryUI.InventoryScreen
 import com.example.smartpantry.Screen.RecipeUI.CreateRecipeScreen
+import com.example.smartpantry.Screen.RecipeUI.EditRecipeScreen
 import com.example.smartpantry.storage.remote.supabase
 import com.example.smartpantry.ui.home.UserDashboardScreen
 import com.example.smartpantry.viewmodel.AuthViewModel

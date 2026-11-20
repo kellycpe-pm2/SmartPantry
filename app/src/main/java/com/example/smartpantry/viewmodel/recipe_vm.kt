@@ -12,18 +12,23 @@ import com.example.smartpantry.storage.local.saveImageToInternalStorage
 import com.example.smartpantry.storage.local.toEntity
 import com.example.smartpantry.storage.local.toModel
 import com.example.smartpantry.storage.remote.createRecipe
-import com.example.smartpantry.storage.remote.createRecipeIngredients
+import com.example.smartpantry.storage.remote.createRecipeIngredient
+import com.example.smartpantry.storage.remote.deleteRecipe as deleteRecipeRemote
+import com.example.smartpantry.storage.remote.deleteRecipeIngredient as deleteIngredientRemote
+import com.example.smartpantry.storage.remote.deleteRecipeIngredients as deleteIngredientsRemote
+import com.example.smartpantry.storage.remote.getRecipeById
 import com.example.smartpantry.storage.remote.getRecipes
 import com.example.smartpantry.storage.remote.supabase
 import com.example.smartpantry.storage.remote.updateRecipe as updateRecipeRemote
-import com.example.smartpantry.storage.remote.deleteRecipe as deleteRecipeRemote
 import com.example.smartpantry.storage.remote.uploadRecipeImage
 import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -63,23 +68,25 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                 _recipes.value = entities.map { it.toModel() }
             }
         }
-        syncPendingItems()
     }
 
-    // --- Form Updaters ---
+    // Form updaters
     fun onNameChange(v: String)        = _uiState.update { it.copy(recipeName = v) }
     fun onCategoryChange(v: String)    = _uiState.update { it.copy(category = v) }
     fun onDescriptionChange(v: String) = _uiState.update { it.copy(description = v) }
-    fun onVeganChange(v: Boolean)      = _uiState.update { it.copy(isVegan = v) }
+    fun onVeganChange(v: Boolean=false)= _uiState.update { it.copy(isVegan = v) }
     fun onImagePicked(path: String?)   = _uiState.update { it.copy(imagePath = path) }
     fun clearError()                   = _uiState.update { it.copy(error = null) }
     fun consumeSaved()                 = _uiState.update { it.copy(saved = false) }
 
-    // --- 1. CREATE ---
+    fun getIngredientsFlow(recipeId: Long): Flow<List<RecipeIngredient>> =
+        ingredientDao.getIngredientsForRecipe(recipeId)
+            .map { list -> list.map { it.toModel() } }
+
+
     fun createFullRecipe(ingredients: List<RecipeIngredient> = emptyList()) {
         val s = _uiState.value
         if (s.recipeName.isBlank() || s.isSaving) return
-
         _uiState.update { it.copy(isSaving = true, error = null) }
 
         viewModelScope.launch {
@@ -92,14 +99,12 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                         try {
                             if (path.startsWith("/data")) path
                             else saveImageToInternalStorage(getApplication(), Uri.parse(path))
-                        } catch (e: Exception) {
-                            Log.e("RecipeSync", "Local image save failed", e)
-                            null
-                        }
+                        } catch (e: Exception) { null }
                     }
                 }
 
                 val newRecipe = Recipe(
+                    recipeId = null,
                     recipeName = s.recipeName.trim(),
                     recipeCategory = s.category.takeIf { it.isNotEmpty() },
                     isVegan = s.isVegan,
@@ -110,11 +115,12 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                     userId = currentUserId
                 )
 
+                // 1) Save locally — Room auto-generates id
                 val localRecipeId = dao.insert(newRecipe.toEntity())
 
                 if (ingredients.isNotEmpty()) {
-                    val withId = ingredients.map { it.copy(recipeId = localRecipeId) }
-                    ingredientDao.insertAll(withId.map { it.toEntity() })
+                    val withFk = ingredients.map { it.copy(id = null, recipeId = localRecipeId) }
+                    ingredientDao.insertAll(withFk.map { it.toEntity() })
                 }
 
                 _uiState.update { it.copy(isSaving = false, saved = true) }
@@ -123,142 +129,210 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                     it.copy(recipeName = "", category = "", description = "", isVegan = false, imagePath = null)
                 }
 
-                uploadRecipeToSupabase(localRecipeId)
+                // 2) Push to Supabase — same pattern as saveAllToInventory
+                pushRecipeToSupabase(localRecipeId)
             } catch (e: Exception) {
-                Log.e("RecipeSync", "Save failed", e)
-                _uiState.update { it.copy(isSaving = false, error = "Failed to save: ${e.message}") }
+                Log.e("RecipeSync", "Create failed", e)
+                _uiState.update { it.copy(isSaving = false, error = "Failed: ${e.message}") }
             }
         }
     }
 
-    // --- 2. UPDATE ---
+    private suspend fun pushRecipeToSupabase(localRecipeId: Long) = withContext(Dispatchers.IO) {
+        try {
+            val entity = dao.getById(localRecipeId) ?: run {
+                Log.e("RecipeSync", "push: local recipe $localRecipeId missing")
+                return@withContext
+            }
+
+            // 1) image
+            var remoteUrl = entity.recipeImage
+            val localPath = entity.localRecipeImage
+            if (remoteUrl == null && localPath != null) {
+                val file = File(localPath)
+                if (file.exists()) {
+                    remoteUrl = uploadRecipeImage(Uri.fromFile(file), getApplication())
+                }
+            }
+
+            // 2) create recipe on Supabase (recipeId = null → server auto-generates)
+            val savedRemote = try {
+                createRecipe(entity.toModel().copy(recipeId = null, recipeImage = remoteUrl))
+            } catch (e: Exception) {
+                Log.e("RecipeSync", "createRecipe failed", e)
+                return@withContext
+            }
+            val serverRecipeId = savedRemote.recipeId ?: run {
+                Log.e("RecipeSync", "createRecipe returned null recipeId")
+                return@withContext
+            }
+            Log.d("RecipeSync", "createRecipe: $localRecipeId → $serverRecipeId")
+
+            // 3) push ingredients with the server recipe id, and re-key each one
+            val localIngredients = ingredientDao.getIngredientsForRecipeOnce(localRecipeId)
+            localIngredients.forEach { local ->
+                val created = createRecipeIngredient(
+                    local.toModel().copy(id = null, recipeId = serverRecipeId)
+                )
+                val serverIngredientId = created?.id
+                if (serverIngredientId != null) {
+                    ingredientDao.replaceId(local.id, local.copy(id = serverIngredientId))
+                    Log.d("RecipeSync",
+                        "ingredient: ${local.id} → $serverIngredientId (recipeId=$serverRecipeId)")
+                } else {
+                    Log.e("RecipeSync", "ingredient ${local.id} not returned from Supabase")
+                }
+            }
+
+            // 4) re-key recipe
+            dao.replaceId(localRecipeId, entity.copy(id = serverRecipeId, recipeImage = remoteUrl))
+            Log.d("RecipeSync", "recipe re-keyed: $localRecipeId → $serverRecipeId")
+        } catch (e: Exception) {
+            Log.e("RecipeSync", "push failed", e)
+        }
+    }
+
+    // ==========================================
+    // UPDATE — same pattern as updateInventoryItem
+    // ==========================================
     fun updateRecipe(recipeId: Long, updated: Recipe) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 val existing = dao.getById(recipeId) ?: return@launch
-
-                // Resolve new image: content:// -> local file; /data -> keep; null -> keep
                 val finalLocalPath = when {
                     updated.localRecipeImage == null -> existing.localRecipeImage
                     updated.localRecipeImage.startsWith("/data") -> updated.localRecipeImage
-                    else -> withContext(Dispatchers.IO) {
-                        try {
-                            saveImageToInternalStorage(
-                                getApplication(),
-                                Uri.parse(updated.localRecipeImage)
-                            )
-                        } catch (e: Exception) {
-                            Log.e("RecipeSync", "Edit: local image save failed", e)
-                            existing.localRecipeImage
-                        }
-                    }
+                    else -> try {
+                        saveImageToInternalStorage(getApplication(), Uri.parse(updated.localRecipeImage))
+                    } catch (e: Exception) { existing.localRecipeImage }
+                }
+                val imageChanged = finalLocalPath != existing.localRecipeImage
+                var remoteUrl = if (imageChanged) null else existing.recipeImage
+                if (remoteUrl == null && finalLocalPath != null) {
+                    val f = File(finalLocalPath)
+                    if (f.exists()) remoteUrl = uploadRecipeImage(Uri.fromFile(f), getApplication())
                 }
 
-                val imageChanged = finalLocalPath != existing.localRecipeImage
-
                 val merged = updated.copy(
-                    recipeId = recipeId,
+                    recipeId = existing.id,
                     userId = existing.userId,
                     createAt = existing.createAt,
                     localRecipeImage = finalLocalPath,
-                    recipeImage = if (imageChanged) null else existing.recipeImage
+                    recipeImage = remoteUrl
                 )
-
-                // Local first — Flow re-emits, UI updates instantly
                 dao.update(merged.toEntity())
-
-                // Remote push in background
-                pushRecipeUpdate(recipeId)
+                updateRecipeRemote(existing.id, merged)
             } catch (e: Exception) {
                 Log.e("RecipeSync", "Update failed", e)
             }
         }
     }
 
-    private fun pushRecipeUpdate(localRecipeId: Long) {
+    // ==========================================
+    // DELETE — same pattern as deleteInventoryItem
+    // ==========================================
+    fun deleteRecipe(recipeId: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val entity = dao.getById(localRecipeId) ?: return@launch
-                var remoteUrl = entity.recipeImage
-                val localPath = entity.localRecipeImage
+                val existing = dao.getById(recipeId) ?: return@launch
 
-                if (remoteUrl == null && localPath != null) {
-                    val file = File(localPath)
-                    if (file.exists()) {
-                        remoteUrl = uploadRecipeImage(Uri.fromFile(file), getApplication())
-                        dao.update(entity.copy(recipeImage = remoteUrl))
-                    }
-                }
+                // delete locally
+                ingredientDao.deleteByRecipe(recipeId)
+                dao.deleteById(recipeId)
 
-                val finalModel = entity.toModel().copy(recipeImage = remoteUrl)
-                updateRecipeRemote(localRecipeId, finalModel)
-            } catch (e: Exception) {
-                Log.e("RecipeSync", "Remote update failed (offline?)", e)
-            }
-        }
-    }
-
-    // --- 3. DELETE ---
-    fun deleteRecipe(recipeId: Long) {
-        viewModelScope.launch {
-            try {
-                val existing = dao.getById(recipeId)
-                dao.deleteById(recipeId)                    // Room Flow emits → row gone
-                if (existing != null) deleteRecipeRemote(recipeId)
+                // delete remotely (cascade handles ingredients on Supabase,
+                // but call both for safety)
+                deleteIngredientsRemote(existing.id)
+                deleteRecipeRemote(existing.id)
             } catch (e: Exception) {
                 Log.e("RecipeSync", "Delete failed", e)
             }
         }
     }
 
-    // --- 4. Background upload (create) ---
-    private fun uploadRecipeToSupabase(localRecipeId: Long) {
+
+    fun addIngredientToRecipe(
+        recipeId: Long,
+        ingredientId: Long,
+        quantity: Double?,
+        unit: String?
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val entity = dao.getById(localRecipeId) ?: return@launch
-                val localPath = entity.localRecipeImage
-                var remoteUrl = entity.recipeImage
-
-                if (remoteUrl == null && localPath != null) {
-                    val file = File(localPath)
-                    if (file.exists()) {
-                        remoteUrl = uploadRecipeImage(Uri.fromFile(file), getApplication())
-                    }
+                // recipeId here is the local id, which equals server id after re-key
+                val recipe = dao.getById(recipeId) ?: run {
+                    Log.e("RecipeSync", "addIngredient: recipe $recipeId missing")
+                    return@launch
                 }
+                val serverRecipeId = recipe.id   // re-key guarantees this
 
-                val updatedModel = entity.toModel().copy(recipeImage = remoteUrl)
-                dao.insert(updatedModel.toEntity())
+                // save locally
+                val newItem = RecipeIngredient(
+                    id = null,
+                    recipeId = recipeId,
+                    ingredientId = ingredientId,
+                    quantity = quantity,
+                    unit = unit
+                )
+                val localId = ingredientDao.insert(newItem.toEntity())
 
-                val savedRemoteRecipe = createRecipe(updatedModel)
-                val remoteId = savedRemoteRecipe.recipeId ?: return@launch
-
-                val localIngredients = ingredientDao.getIngredientsForRecipe(localRecipeId).first()
-                if (localIngredients.isNotEmpty()) {
-                    val remoteIngredients = localIngredients.map { e ->
-                        e.toModel().copy(id = null, recipeId = remoteId)
-                    }
-                    createRecipeIngredients(remoteIngredients)
+                // push remotely
+                val created = createRecipeIngredient(
+                    newItem.copy(id = null, recipeId = serverRecipeId)
+                )
+                val serverIngredientId = created?.id
+                if (serverIngredientId != null) {
+                    ingredientDao.replaceId(localId, newItem.copy(id = serverIngredientId).toEntity())
+                    Log.d("RecipeSync", "addIngredient: $localId → $serverIngredientId (recipeId=$serverRecipeId)")
+                } else {
+                    Log.e("RecipeSync", "addIngredient: createRecipeIngredient returned null")
                 }
             } catch (e: Exception) {
-                Log.e("RecipeSync", "Background upload failed", e)
+                Log.e("RecipeSync", "addIngredient failed", e)
             }
         }
     }
 
-    // --- 5. Sync pending images ---
+    fun updateRecipeIngredient(recipeIngredientId: Long, quantity: Double?, unit: String?) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val existing = ingredientDao.getById(recipeIngredientId) ?: return@launch
+                val merged = existing.toModel().copy(quantity = quantity, unit = unit)
+                ingredientDao.update(merged.toEntity())
+                com.example.smartpantry.storage.remote
+                    .updateRecipeIngredient(recipeIngredientId, merged)
+            } catch (e: Exception) {
+                Log.e("RecipeSync", "Update ingredient failed", e)
+            }
+        }
+    }
+
+    fun deleteRecipeIngredient(recipeIngredientId: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                ingredientDao.deleteById(recipeIngredientId)
+                deleteIngredientRemote(recipeIngredientId)
+            } catch (e: Exception) {
+                Log.e("RecipeSync", "Delete ingredient failed", e)
+            }
+        }
+    }
+
+    // ==========================================
+    // SYNC / REFRESH
+    // ==========================================
     fun syncPendingItems() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val all = dao.observeAll().first()
-                val pending = all.filter { it.localRecipeImage != null && it.recipeImage == null }
-                for (e in pending) uploadRecipeToSupabase(e.id)
+                all.filter { it.recipeImage == null }
+                    .forEach { pushRecipeToSupabase(it.id) }
             } catch (e: Exception) {
-                Log.e("RecipeSync", "Pending sync failed", e)
+                Log.e("RecipeSync", "sync failed", e)
             }
         }
     }
 
-    // --- 6. Refresh from Supabase ---
     fun refreshRecipes(force: Boolean = false) {
         viewModelScope.launch(Dispatchers.IO) {
             _isLoading.value = true
@@ -274,4 +348,11 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    suspend fun getIngredientsForRecipeOnce(recipeId: Long): List<RecipeIngredient> =
+        withContext(Dispatchers.IO) {
+            try {
+                ingredientDao.getIngredientsForRecipeOnce(recipeId).map { it.toModel() }
+            } catch (e: Exception) { emptyList() }
+        }
 }

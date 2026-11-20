@@ -44,9 +44,13 @@ fun CreateRecipeScreen(
 
     val categoryOptions = listOf("Breakfast", "Lunch", "Dinner", "Dessert", "Snack", "Drink", "Other")
 
-    // State for selected ingredients
     var selectedIngredients by remember { mutableStateOf<List<RecipeIngredient>>(emptyList()) }
     var showIngredientPicker by remember { mutableStateOf(false) }
+    var configuringIngredient by remember { mutableStateOf<Ingredient?>(null) }
+
+    LaunchedEffect(Unit) {
+        ingredientVm.refreshIngredients(force = true)
+    }
 
     LaunchedEffect(state.saved) {
         if (state.saved) {
@@ -55,13 +59,10 @@ fun CreateRecipeScreen(
         }
     }
 
-    // Error Dialog
     state.error?.let { msg ->
         AlertDialog(
             onDismissRequest = { recipeVm.clearError() },
-            confirmButton = {
-                TextButton(onClick = { recipeVm.clearError() }) { Text("OK") }
-            },
+            confirmButton = { TextButton(onClick = { recipeVm.clearError() }) { Text("OK") } },
             text = { Text(msg) },
             title = { Text("Couldn't save") }
         )
@@ -71,14 +72,7 @@ fun CreateRecipeScreen(
         containerColor = scheme.background,
         topBar = {
             TopAppBar(
-                title = {
-                    Text(
-                        text = "Create Recipe",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = scheme.primary
-                    )
-                },
+                title = { Text("Create Recipe", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = scheme.primary) },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
                         Icon(Icons.Default.ArrowBack, "Back", tint = scheme.primary)
@@ -103,19 +97,11 @@ fun CreateRecipeScreen(
         ) {
             Spacer(Modifier.height(16.dp))
 
-            // Image Picker Setup
             var pickedUri by remember { mutableStateOf<Uri?>(null) }
             var showSourceDialog by remember { mutableStateOf(false) }
 
-            val openCamera = rememberCameraCapture { uri ->
-                pickedUri = uri
-                recipeVm.onImagePicked(uri.toString())
-            }
-
-            val openGallery = rememberGalleryPicker { uri ->
-                pickedUri = uri
-                recipeVm.onImagePicked(uri.toString())
-            }
+            val openCamera = rememberCameraCapture { uri -> pickedUri = uri; recipeVm.onImagePicked(uri.toString()) }
+            val openGallery = rememberGalleryPicker { uri -> pickedUri = uri; recipeVm.onImagePicked(uri.toString()) }
 
             ImageInput(
                 imagePath = pickedUri?.toString() ?: state.imagePath,
@@ -128,20 +114,12 @@ fun CreateRecipeScreen(
                     title = { Text(if (pickedUri == null) "Add image" else "Replace image") },
                     text = {
                         Column {
-                            TextButton(onClick = {
-                                showSourceDialog = false
-                                openCamera()
-                            }) { Text("Take a photo") }
-                            TextButton(onClick = {
-                                showSourceDialog = false
-                                openGallery()
-                            }) { Text("Choose from gallery") }
+                            TextButton(onClick = { showSourceDialog = false; openCamera() }) { Text("Take a photo") }
+                            TextButton(onClick = { showSourceDialog = false; openGallery() }) { Text("Choose from gallery") }
                         }
                     },
                     confirmButton = {},
-                    dismissButton = {
-                        TextButton(onClick = { showSourceDialog = false }) { Text("Cancel") }
-                    }
+                    dismissButton = { TextButton(onClick = { showSourceDialog = false }) { Text("Cancel") } }
                 )
             }
 
@@ -164,27 +142,14 @@ fun CreateRecipeScreen(
             )
             Spacer(Modifier.height(16.dp))
 
-            // Vegan Toggle
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Eco,
-                        contentDescription = null,
-                        tint = scheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Text(
-                        text = "Vegan Recipe",
-                        color = scheme.onBackground,
-                        fontWeight = FontWeight.Medium
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.Eco, null, tint = scheme.primary, modifier = Modifier.size(20.dp))
+                    Text("Vegan Recipe", color = scheme.onBackground, fontWeight = FontWeight.Medium)
                 }
                 Switch(
                     checked = state.isVegan,
@@ -206,36 +171,27 @@ fun CreateRecipeScreen(
 
             Spacer(Modifier.height(24.dp))
 
-            // Selected Ingredients Section
+            // INGREDIENTS
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    "Ingredients",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    color = scheme.onBackground
-                )
+                Text("Ingredients", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = scheme.onBackground)
                 TextButton(onClick = { showIngredientPicker = true }) {
-                    Icon(Icons.Default.Add, contentDescription = "Add Ingredient")
+                    Icon(Icons.Default.Add, "Add Ingredient")
                     Spacer(Modifier.width(4.dp))
                     Text("Add")
                 }
             }
 
-            // Display Selected Ingredients
             if (selectedIngredients.isEmpty()) {
-                Text(
-                    "No ingredients added yet",
-                    fontSize = 12.sp,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 8.dp)
-                )
+                Text("No ingredients added yet", fontSize = 12.sp, color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 8.dp))
             } else {
-                selectedIngredients.forEach { item ->
-                    val ingredientName = availableIngredients.find { it.ingredientId == item.ingredientId }?.ingredientName ?: "Unknown"
+                selectedIngredients.forEachIndexed { index, item ->
+                    val ingredientName = availableIngredients
+                        .find { it.ingredientId == item.ingredientId }?.ingredientName ?: "Unknown"
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -245,12 +201,23 @@ fun CreateRecipeScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(ingredientName, fontWeight = FontWeight.Medium)
-                            Text("${item.quantity} ${item.unit}", fontSize = 12.sp, color = scheme.onSurfaceVariant)
+                            Text("${item.quantity ?: 0.0} ${item.unit ?: ""}", fontSize = 12.sp, color = scheme.onSurfaceVariant)
                         }
-                        IconButton(onClick = { selectedIngredients = selectedIngredients - item }) {
-                            Icon(Icons.Default.Delete, contentDescription = "Remove", tint = scheme.error)
+                        IconButton(onClick = {
+                            val ing = availableIngredients.find { it.ingredientId == item.ingredientId }
+                            if (ing != null) {
+                                selectedIngredients = selectedIngredients.toMutableList().also { it.removeAt(index) }
+                                configuringIngredient = ing
+                            }
+                        }) {
+                            Icon(Icons.Default.Edit, "Edit", tint = scheme.primary, modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(onClick = {
+                            selectedIngredients = selectedIngredients.toMutableList().also { it.removeAt(index) }
+                        }) {
+                            Icon(Icons.Default.Delete, "Remove", tint = scheme.error)
                         }
                     }
                 }
@@ -261,21 +228,12 @@ fun CreateRecipeScreen(
             Button(
                 onClick = { recipeVm.createFullRecipe(ingredients = selectedIngredients) },
                 enabled = state.canSubmit,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
+                modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(28.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = scheme.primary,
-                    contentColor = scheme.onPrimary
-                )
+                colors = ButtonDefaults.buttonColors(containerColor = scheme.primary, contentColor = scheme.onPrimary)
             ) {
                 if (state.isSaving) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(22.dp),
-                        strokeWidth = 2.dp,
-                        color = scheme.onPrimary
-                    )
+                    CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = scheme.onPrimary)
                 } else {
                     Text("Create Recipe", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
@@ -285,10 +243,9 @@ fun CreateRecipeScreen(
         }
     }
 
-    // --- INGREDIENT PICKER DIALOG ---
+    // PICKER DIALOG
     if (showIngredientPicker) {
         var searchQuery by remember { mutableStateOf("") }
-
         AlertDialog(
             onDismissRequest = { showIngredientPicker = false },
             title = { Text("Select Ingredient") },
@@ -303,29 +260,79 @@ fun CreateRecipeScreen(
                     )
                     Spacer(Modifier.height(8.dp))
 
-                    LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
-                        val filtered = availableIngredients.filter { it.ingredientName.contains(searchQuery, ignoreCase = true) }
-                        items(filtered) { ing ->
-                            ListItem(
-                                headlineContent = { Text(ing.ingredientName) },
-                                supportingContent = { Text(ing.category ?: "Uncategorized") },
-                                modifier = Modifier.clickable {
-                                    // Defaulting to quantity 1 and unit "pcs" for simplicity
-                                    selectedIngredients = selectedIngredients + RecipeIngredient(
-                                        ingredientId = ing.ingredientId!!,
-                                        recipeId = 0,
-                                        quantity = 1.0,
-                                        unit = "pcs"
-                                    )
-                                    showIngredientPicker = false
-                                }
-                            )
+                    if (availableIngredients.isEmpty()) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(Icons.Default.SearchOff, null, modifier = Modifier.size(48.dp), tint = scheme.onSurfaceVariant)
+                            Spacer(Modifier.height(8.dp))
+                            Text("No ingredients available", fontSize = 14.sp)
+                            Text("Create ingredients first in Pantry", fontSize = 12.sp, color = scheme.onSurfaceVariant)
+                        }
+                    } else {
+                        LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                            val filtered = availableIngredients
+                                .filter { it.ingredientName.contains(searchQuery, ignoreCase = true) }
+                            items(filtered, key = { it.ingredientId ?: 0L }) { ing ->
+                                ListItem(
+                                    headlineContent = { Text(ing.ingredientName) },
+                                    supportingContent = { Text(ing.category ?: "Uncategorized") },
+                                    modifier = Modifier.clickable {
+                                        configuringIngredient = ing
+                                        showIngredientPicker = false
+                                    }
+                                )
+                            }
                         }
                     }
                 }
             },
+            confirmButton = { TextButton(onClick = { showIngredientPicker = false }) { Text("Done") } }
+        )
+    }
+
+    // QTY/UNIT DIALOG
+    configuringIngredient?.let { ing ->
+        var qty by remember { mutableStateOf("1") }
+        var unit by remember { mutableStateOf(ing.unit ?: "pcs") }
+
+        AlertDialog(
+            onDismissRequest = { configuringIngredient = null },
+            title = { Text("Add ${ing.ingredientName}") },
+            text = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = qty,
+                        onValueChange = { qty = it },
+                        label = { Text("Qty") },
+                        modifier = Modifier.weight(1f),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = unit,
+                        onValueChange = { unit = it },
+                        label = { Text("Unit") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                }
+            },
             confirmButton = {
-                TextButton(onClick = { showIngredientPicker = false }) { Text("Done") }
+                TextButton(onClick = {
+                    selectedIngredients = selectedIngredients + RecipeIngredient(
+                        id = null,                                   // VM assigns on save
+                        recipeId = null,                             // VM assigns on save
+                        ingredientId = ing.ingredientId!!,
+                        quantity = qty.toDoubleOrNull(),
+                        unit = unit.trim().takeIf { it.isNotEmpty() }
+                    )
+                    configuringIngredient = null
+                }) { Text("Add") }
+            },
+            dismissButton = {
+                TextButton(onClick = { configuringIngredient = null }) { Text("Cancel") }
             }
         )
     }

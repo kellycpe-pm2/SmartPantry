@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
@@ -16,16 +17,22 @@ interface RecipeDao {
     @Query("SELECT * FROM recipe WHERE id = :id")
     suspend fun getById(id: Long): RecipeEntity?
 
-    @Update
-    suspend fun update(entity: RecipeEntity)
-
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entity: RecipeEntity): Long
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(entities: List<RecipeEntity>)
 
+    @Update
+    suspend fun update(entity: RecipeEntity)
+
     @Query("DELETE FROM recipe WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Transaction
+    suspend fun replaceId(oldId: Long, newEntity: RecipeEntity) {
+        deleteById(oldId)
+        insert(newEntity)
+    }
+
 }

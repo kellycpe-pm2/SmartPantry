@@ -5,15 +5,16 @@ import androidx.room.PrimaryKey
 import com.example.smartpantry.model.RecipeIngredient
 
 @Entity(tableName = "recipe_ingredient")
-data class Recipe_IngredientEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+data class RecipeIngredientEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val recipeId: Long? = null,
     val ingredientId: Long,
-    val recipeId: Long,
-    val quantity: Double?,
-    val unit: String?
+    val quantity: Double? = null,
+    val unit: String? = null
 )
 
-fun Recipe_IngredientEntity.toModel() = RecipeIngredient(
+fun RecipeIngredientEntity.toModel() = RecipeIngredient(
     id = id,
     ingredientId = ingredientId,
     recipeId = recipeId,
@@ -21,10 +22,10 @@ fun Recipe_IngredientEntity.toModel() = RecipeIngredient(
     unit = unit
 )
 
-fun RecipeIngredient.toEntity() = Recipe_IngredientEntity(
+fun RecipeIngredient.toEntity() = RecipeIngredientEntity(
     id = id ?: 0,
-    ingredientId = ingredientId,
     recipeId = recipeId,
+    ingredientId = ingredientId,
     quantity = quantity,
     unit = unit
 )
