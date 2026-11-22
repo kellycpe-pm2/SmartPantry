@@ -31,6 +31,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.smartpantry.R
+import com.example.smartpantry.Screen.Admin.AdminScreen
 import com.example.smartpantry.Screen.Auth.CreateAccountScreen
 import com.example.smartpantry.Screen.Auth.LoginScreen
 import com.example.smartpantry.Screen.Auth.ResetPasswordScreen
@@ -47,6 +48,7 @@ import com.example.smartpantry.Screen.RecipeUI.CreateRecipeScreen
 import com.example.smartpantry.Screen.RecipeUI.EditRecipeScreen
 import com.example.smartpantry.storage.remote.supabase
 import com.example.smartpantry.ui.home.UserDashboardScreen
+import com.example.smartpantry.viewmodel.AdminViewModel
 import com.example.smartpantry.viewmodel.AuthViewModel
 import com.example.smartpantry.viewmodel.IngredientUserViewModel
 import com.example.smartpantry.viewmodel.IngredientViewModel
@@ -90,6 +92,8 @@ fun AppNavHost(
 
     // ViewModels
     val authViewModel: AuthViewModel = viewModel()
+
+    val adminVm: AdminViewModel = viewModel()
 
     val profileViewModel: ProfileViewModel = viewModel()
     val profile by profileViewModel.profile.collectAsState()
@@ -193,7 +197,15 @@ fun AppNavHost(
                 )
             }
 
-            composable("home")    { UserDashboardScreen() }
+            composable("home") {
+                if (profile?.role == "admin") {
+                    LaunchedEffect(Unit) {
+                        navController.navigate("admin") { popUpTo("home") { inclusive = true } }
+                    }
+                } else {
+                    UserDashboardScreen()
+                }
+            }
 
 
             composable("pantry")  {
@@ -248,6 +260,21 @@ fun AppNavHost(
 
 
             composable("records") { UserDashboardScreen() }
+
+            composable("admin") {
+                if (profile?.role == "admin") {
+                    AdminScreen(
+                        vm = adminVm,
+                        onLogout = {
+                            adminVm.reset()
+                            profileViewModel.logout()
+                            navController.navigate("login") { popUpTo(0) { inclusive = true } }
+                        }
+                    )
+                } else {
+                    LaunchedEffect(Unit) { navController.navigate("home") { popUpTo(0) } }
+                }
+            }
 
             composable("profile") {
                 val p = profile
