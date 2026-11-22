@@ -14,6 +14,9 @@ interface IngredientDao {
     @Query("SELECT * FROM ingredient ORDER BY id DESC")
     fun observeAll(): Flow<List<IngredientEntity>>
 
+    @Query("SELECT * FROM ingredient ORDER BY id DESC")
+    suspend fun getAll(): List<IngredientEntity>
+
     @Query("SELECT * FROM ingredient WHERE id = :id")
     suspend fun getById(id: Long): IngredientEntity?
 

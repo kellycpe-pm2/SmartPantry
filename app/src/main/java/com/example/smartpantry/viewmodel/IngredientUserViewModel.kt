@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.models.IngredientUser
+import com.example.smartpantry.hardware.NotificationHelper
 import com.example.smartpantry.model.Ingredient
 import com.example.smartpantry.storage.local.AppDatabase
 import com.example.smartpantry.storage.local.toEntity
@@ -124,6 +125,9 @@ class IngredientUserViewModel(app: Application) : AndroidViewModel(app) {
                 val entities = itemsToSave.map { it.toEntity() }
                 dao.insertAll(entities) // Save to Room first
 
+                // Trigger immediate notification check for new items
+                NotificationHelper.triggerImmediateCheck(getApplication())
+
                 // Push to Supabase
                 for (item in itemsToSave) {
                     try {
@@ -185,6 +189,7 @@ class IngredientUserViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 // 1. Update Locally in Room
                 dao.insert(item.toEntity())
+                NotificationHelper.triggerImmediateCheck(getApplication())
 
                 // 2. Update Remotely in Supabase
                 withContext(Dispatchers.IO) {

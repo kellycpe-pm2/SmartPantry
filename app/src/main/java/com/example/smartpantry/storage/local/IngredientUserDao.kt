@@ -12,6 +12,9 @@ interface IngredientUserDao {
     @Query("SELECT * FROM ingredient_user ORDER BY expiredDate ASC")
     fun observeAll(): Flow<List<IngredientUserEntity>>
 
+    @Query("SELECT * FROM ingredient_user ORDER BY expiredDate ASC")
+    suspend fun getAll(): List<IngredientUserEntity>
+
     @Query("SELECT * FROM ingredient_user WHERE IngredientUser_Id = :id")
     suspend fun getById(id: Long): IngredientUserEntity?
 
