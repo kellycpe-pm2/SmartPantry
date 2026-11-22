@@ -1,7 +1,10 @@
-package com.example.smartpantry.Screen.IngredientUI
+package com.example.smartpantry.Screen.RecipeUI
 
 import android.content.Intent
 import android.graphics.Paint
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
@@ -62,6 +65,12 @@ fun RecipeDetailScreen(
     var exportBytes by remember { mutableStateOf<ByteArray?>(null) }
     var exportMime by remember { mutableStateOf("application/pdf") }
     var exportName by remember { mutableStateOf("recipe.pdf") }
+    var selectedForUse by remember { mutableStateOf<RecipeDetailIngredient?>(null) }
+    var useAmount by remember { mutableStateOf("") }
+    var showUseRecipeConfirm by remember { mutableStateOf(false) }
+    var usingStock by remember { mutableStateOf(false) }
+    var useMessage by remember { mutableStateOf<String?>(null) }
+    var useMessageIsError by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val scheme = MaterialTheme.colorScheme
 
@@ -120,6 +129,27 @@ fun RecipeDetailScreen(
             putExtra(Intent.EXTRA_TEXT, recipeText(r, list))
         }
         context.startActivity(Intent.createChooser(send, "Share recipe"))
+    }
+
+    fun shareRecipeImage(r: Recipe, list: List<RecipeDetailIngredient>) {
+        scope.launch {
+            val bitmap = withContext(Dispatchers.Default) { buildRecipeShareImage(r, list) }
+            val file = File(context.cacheDir, "smartpantry_recipe_${r.recipeId ?: "share"}.png")
+            withContext(Dispatchers.IO) {
+                file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            }
+            val uri = FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", file
+            )
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_SUBJECT, "SmartPantry recipe: ${r.recipeName}")
+                putExtra(Intent.EXTRA_TEXT, "${r.recipeName}\nShared with SmartPantry")
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(send, "Share recipe image"))
+        }
     }
 
     fun sharePdf(r: Recipe, list: List<RecipeDetailIngredient>) {
@@ -262,6 +292,17 @@ fun RecipeDetailScreen(
                                         val date = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(it))
                                         Text("Nearest expiry: $date", fontSize = 11.sp, color = scheme.onSurfaceVariant)
                                     }
+                                    OutlinedButton(
+                                        onClick = {
+                                            selectedForUse = item
+                                            useAmount = item.requiredQuantity.toString()
+                                            useMessage = null
+                                        },
+                                        enabled = item.availableQuantity > 0.0,
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                    ) {
+                                        Text("Use this ingredient", fontSize = 12.sp)
+                                    }
                                 }
                                 Surface(
                                     color = if (item.isAvailable) Color(0xFFE4F4EA) else scheme.errorContainer,
@@ -277,6 +318,33 @@ fun RecipeDetailScreen(
                                 }
                             }
                         }
+                    }
+                }
+                item {
+                    Button(
+                        onClick = { showUseRecipeConfirm = true },
+                        enabled = !loading && ingredients.isNotEmpty() && ingredients.all { it.isAvailable },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                    ) {
+                        Text("Use this recipe – deduct all ingredients")
+                    }
+                    useMessage?.let { message ->
+                        Text(
+                            message,
+                            modifier = Modifier.padding(horizontal = 20.dp),
+                            color = if (useMessageIsError) scheme.error else Color(0xFF278653),
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+                item {
+                    Button(
+                        onClick = { shareRecipeImage(recipe, ingredients) },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Share Recipe Image")
                     }
                 }
                 item {
@@ -344,6 +412,187 @@ fun RecipeDetailScreen(
             }
         }
     }
+
+    selectedForUse?.let { selected ->
+        AlertDialog(
+            onDismissRequest = { if (!usingStock) selectedForUse = null },
+            title = { Text("Use ${selected.ingredientName}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Available: ${selected.availableQuantity} ${selected.availableUnit}")
+                    Text("Recipe requirement: ${selected.requiredQuantity} ${selected.requiredUnit}")
+                    OutlinedTextField(
+                        value = useAmount,
+                        onValueChange = { useAmount = it },
+                        label = { Text("Amount to use (${selected.availableUnit})") },
+                        singleLine = true,
+                        enabled = !usingStock
+                    )
+                    useMessage?.let {
+                        Text(it, color = if (useMessageIsError) scheme.error else Color(0xFF278653))
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !usingStock && (useAmount.toDoubleOrNull()?.let { it > 0.0 } == true),
+                    onClick = {
+                        val amount = useAmount.toDoubleOrNull() ?: return@Button
+                        usingStock = true
+                        scope.launch {
+                            val result = recipeVm.useIngredientStock(
+                                selected.ingredientId,
+                                amount,
+                                selected.availableUnit
+                            )
+                            usingStock = false
+                            result.onSuccess {
+                                useMessage = it
+                                useMessageIsError = false
+                                selectedForUse = null
+                                ingredients = recipeVm.getRecipeDetailIngredients(recipeId)
+                            }.onFailure {
+                                useMessage = it.message ?: "Unable to use this ingredient."
+                                useMessageIsError = true
+                            }
+                        }
+                    }
+                ) { Text(if (usingStock) "Updating..." else "Confirm use") }
+            },
+            dismissButton = {
+                TextButton(onClick = { selectedForUse = null }, enabled = !usingStock) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showUseRecipeConfirm && recipe != null) {
+        AlertDialog(
+            onDismissRequest = { if (!usingStock) showUseRecipeConfirm = false },
+            title = { Text("Use this recipe?") },
+            text = {
+                Text("SmartPantry will deduct the required quantity of every ingredient from your pantry. This action cannot be automatically undone.")
+            },
+            confirmButton = {
+                Button(
+                    enabled = !usingStock,
+                    onClick = {
+                        usingStock = true
+                        scope.launch {
+                            val result = recipeVm.useWholeRecipe(recipeId)
+                            usingStock = false
+                            showUseRecipeConfirm = false
+                            result.onSuccess {
+                                useMessage = it
+                                useMessageIsError = false
+                                ingredients = recipeVm.getRecipeDetailIngredients(recipeId)
+                            }.onFailure {
+                                useMessage = it.message ?: "Unable to use this recipe."
+                                useMessageIsError = true
+                            }
+                        }
+                    }
+                ) { Text(if (usingStock) "Updating..." else "Confirm") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUseRecipeConfirm = false }, enabled = !usingStock) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+}
+
+/** Creates a shareable recipe poster locally; no network/image-generation service is required. */
+private fun buildRecipeShareImage(
+    recipe: Recipe,
+    ingredients: List<RecipeDetailIngredient>
+): Bitmap {
+    val width = 1080
+    val height = 1440
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    val background = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.rgb(241, 250, 248) }
+    canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), background)
+
+    val dark = android.graphics.Color.rgb(30, 65, 61)
+    val muted = android.graphics.Color.rgb(91, 116, 111)
+    val green = android.graphics.Color.rgb(61, 139, 111)
+    val white = android.graphics.Color.WHITE
+    val panel = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white }
+    val header = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.rgb(211, 239, 231) }
+    canvas.drawRoundRect(RectF(42f, 42f, 1038f, 1398f), 42f, 42f, panel)
+    canvas.drawRoundRect(RectF(42f, 42f, 1038f, 380f), 42f, 42f, header)
+
+    fun textPaint(size: Float, color: Int, bold: Boolean = false) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = size
+        this.color = color
+        typeface = if (bold) Typeface.create(Typeface.DEFAULT, Typeface.BOLD) else Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+    }
+    val brandPaint = textPaint(34f, green, true)
+    val titlePaint = textPaint(58f, dark, true)
+    val subtitlePaint = textPaint(28f, muted)
+    val headingPaint = textPaint(34f, dark, true)
+    val itemPaint = textPaint(27f, dark)
+    val statusPaint = textPaint(23f, green, true)
+    val missingPaint = textPaint(23f, android.graphics.Color.rgb(183, 73, 65), true)
+
+    canvas.drawText("SMARTPANTRY  •  COOK WITH WHAT YOU HAVE", 88f, 112f, brandPaint)
+    val titleLines = wrapCanvasText(recipe.recipeName, titlePaint, 900f).take(2)
+    var y = 205f
+    titleLines.forEach { canvas.drawText(it, 88f, y, titlePaint); y += 68f }
+    val category = buildString {
+        append(recipe.recipeCategory?.takeIf { it.isNotBlank() } ?: "Recipe")
+        if (recipe.isVegan) append("   •   Vegan 🌱")
+    }
+    canvas.drawText(category.take(58), 90f, 330f, subtitlePaint)
+
+    var currentY = 450f
+    canvas.drawText("INGREDIENT CHECKLIST", 88f, currentY, headingPaint)
+    currentY += 54f
+    val shown = ingredients.take(12)
+    shown.forEach { ingredient ->
+        val isAvailable = ingredient.isAvailable
+        val line = "${ingredient.ingredientName}: ${ingredient.requiredQuantity} ${ingredient.requiredUnit}".trim()
+        val linePaint = itemPaint
+        wrapCanvasText(line, linePaint, 720f).take(1).forEach {
+            canvas.drawText(it, 92f, currentY, linePaint)
+        }
+        val status = if (isAvailable) "AVAILABLE" else "MISSING"
+        canvas.drawText(status, 790f, currentY, if (isAvailable) statusPaint else missingPaint)
+        currentY += 48f
+        val stock = "Pantry: ${ingredient.availableQuantity} ${ingredient.availableUnit}".trim()
+        canvas.drawText(stock.take(70), 112f, currentY, subtitlePaint)
+        currentY += 45f
+        if (currentY > 1190f) return@forEach
+    }
+    if (ingredients.size > shown.size) {
+        canvas.drawText("+ ${ingredients.size - shown.size} more ingredients", 92f, minOf(currentY + 8f, 1260f), subtitlePaint)
+    }
+    val available = ingredients.count { it.isAvailable }
+    val summary = "$available / ${ingredients.size} ingredients available"
+    canvas.drawRoundRect(RectF(82f, 1270f, 998f, 1345f), 24f, 24f, header)
+    canvas.drawText(summary, 112f, 1318f, headingPaint)
+    canvas.drawText("Made with SmartPantry", 88f, 1375f, textPaint(22f, muted))
+    return bitmap
+}
+
+private fun wrapCanvasText(text: String, paint: Paint, maxWidth: Float): List<String> {
+    val words = text.split(Regex("\\s+"))
+    val lines = mutableListOf<String>()
+    var line = ""
+    for (word in words) {
+        val candidate = if (line.isEmpty()) word else "$line $word"
+        if (paint.measureText(candidate) <= maxWidth || line.isEmpty()) {
+            line = candidate
+        } else {
+            lines += line
+            line = word
+        }
+    }
+    if (line.isNotEmpty()) lines += line
+    return lines
 }
 
 private fun buildRecipePdf(

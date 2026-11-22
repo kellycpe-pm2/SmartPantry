@@ -21,6 +21,7 @@ import com.example.smartpantry.storage.remote.getRecipes
 import com.example.smartpantry.storage.remote.supabase
 import com.example.smartpantry.storage.remote.updateRecipe as updateRecipeRemote
 import com.example.smartpantry.storage.remote.uploadRecipeImage
+import com.example.smartpantry.storage.remote.updateIngredientUser
 import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -149,6 +150,93 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                 )
             }
         }
+
+
+    /** Deducts a user-entered amount from pantry batches, earliest expiry first. */
+    suspend fun useIngredientStock(
+        ingredientId: Long,
+        amount: Double,
+        unit: String
+    ): Result<String> = withContext(Dispatchers.IO) {
+        if (!amount.isFinite() || amount <= 0.0) {
+            return@withContext Result.failure(IllegalArgumentException("Enter an amount greater than 0."))
+        }
+        val batches = ingredientUserDao.getAll()
+            .filter { it.ingredientId == ingredientId && (it.quantity ?: 0.0) > 0.0 }
+            .sortedBy { if (it.expiredDate > 0L) it.expiredDate else Long.MAX_VALUE }
+        if (batches.isEmpty()) {
+            return@withContext Result.failure(IllegalStateException("There is no stock for this ingredient."))
+        }
+        val available = batches.sumOf { it.quantity ?: 0.0 }
+        val stockUnit = batches.firstOrNull()?.quantityUnit.orEmpty()
+        if (!stockUnit.equals(unit, ignoreCase = true)) {
+            return@withContext Result.failure(IllegalArgumentException("Unit mismatch. Pantry unit is '$stockUnit'. Please use the same unit."))
+        }
+        if (available + 0.000001 < amount) {
+            return@withContext Result.failure(IllegalStateException("Not enough stock. Available: $available $stockUnit."))
+        }
+
+        var remaining = amount
+        for (batch in batches) {
+            if (remaining <= 0.000001) break
+            val current = batch.quantity ?: 0.0
+            val deducted = minOf(current, remaining)
+            val updated = batch.copy(quantity = (current - deducted).coerceAtLeast(0.0))
+            ingredientUserDao.insert(updated)
+            try {
+                updateIngredientUser(updated.id, updated.toModel())
+            } catch (e: Exception) {
+                Log.e("RecipeUsage", "Remote stock update failed for ${updated.id}", e)
+            }
+            remaining -= deducted
+        }
+        Result.success("Used $amount $unit successfully.")
+    }
+
+    /** Uses the recipe's required amount for every ingredient, only if all stock is available. */
+    suspend fun useWholeRecipe(recipeId: Long): Result<String> = withContext(Dispatchers.IO) {
+        val recipeItems = ingredientDao.getIngredientsForRecipeOnce(recipeId).map { it.toModel() }
+        if (recipeItems.isEmpty()) {
+            return@withContext Result.failure(IllegalStateException("This recipe has no ingredients."))
+        }
+        val requirements = recipeItems.groupBy { it.ingredientId }.mapValues { (_, rows) ->
+            rows.sumOf { it.quantity ?: 1.0 } to rows.firstOrNull()?.unit.orEmpty()
+        }
+        val allBatches = ingredientUserDao.getAll().filter { it.ingredientId != null }
+        for ((ingredientId, requirement) in requirements) {
+            val batches = allBatches.filter { it.ingredientId == ingredientId && (it.quantity ?: 0.0) > 0.0 }
+            val available = batches.sumOf { it.quantity ?: 0.0 }
+            val unit = batches.firstOrNull()?.quantityUnit.orEmpty()
+            if (available + 0.000001 < requirement.first) {
+                val name = masterIngredientDao.getAll().firstOrNull { it.id == ingredientId }?.ingredientName ?: "Ingredient $ingredientId"
+                return@withContext Result.failure(IllegalStateException("Not enough $name. Need ${requirement.first} ${requirement.second}, available $available $unit."))
+            }
+            if (!unit.equals(requirement.second, ignoreCase = true)) {
+                val name = masterIngredientDao.getAll().firstOrNull { it.id == ingredientId }?.ingredientName ?: "Ingredient $ingredientId"
+                return@withContext Result.failure(IllegalArgumentException("Unit mismatch for $name. Recipe uses '${requirement.second}' but pantry uses '$unit'."))
+            }
+        }
+        // Validation completed for every ingredient. Now deduct each requirement.
+        for ((ingredientId, requirement) in requirements) {
+            var remaining = requirement.first
+            val batches = allBatches.filter { it.ingredientId == ingredientId && (it.quantity ?: 0.0) > 0.0 }
+                .sortedBy { if (it.expiredDate > 0L) it.expiredDate else Long.MAX_VALUE }
+            for (batch in batches) {
+                if (remaining <= 0.000001) break
+                val current = batch.quantity ?: 0.0
+                val deducted = minOf(current, remaining)
+                val updated = batch.copy(quantity = (current - deducted).coerceAtLeast(0.0))
+                ingredientUserDao.insert(updated)
+                try {
+                    updateIngredientUser(updated.id, updated.toModel())
+                } catch (e: Exception) {
+                    Log.e("RecipeUsage", "Remote stock update failed for ${updated.id}", e)
+                }
+                remaining -= deducted
+            }
+        }
+        Result.success("Recipe ingredients deducted from your pantry.")
+    }
 
 
     fun createFullRecipe(ingredients: List<RecipeIngredient> = emptyList()) {

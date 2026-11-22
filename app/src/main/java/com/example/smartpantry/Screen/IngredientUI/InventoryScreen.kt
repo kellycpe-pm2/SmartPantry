@@ -29,13 +29,15 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InventoryScreen(
     onAddInventoryClick: () -> Unit,
     onCreateIngredientClick: () -> Unit,
-    onEditIngredientClick: (Long) -> Unit,      
+    onEditIngredientClick: (Long) -> Unit,
     vm: IngredientUserViewModel = viewModel(),
     ingredientVm: IngredientViewModel = viewModel(),
     onEditClick: (Long) -> Unit = {}
@@ -43,6 +45,7 @@ fun InventoryScreen(
     val inventory by vm.inventory.collectAsState()
     val availableIngredients by ingredientVm.ingredients.collectAsState()
     val scheme = MaterialTheme.colorScheme
+    val context = LocalContext.current
 
     var selectedView by remember { mutableIntStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
@@ -155,7 +158,12 @@ fun InventoryScreen(
                                     item = item,
                                     ingredientInfo = info,
                                     onDelete = { item.id?.let { vm.deleteInventoryItem(it) } },
-                                    onEdit = { item.id?.let { onEditClick(it) } }
+                                    onEdit = { item.id?.let { onEditClick(it) } },
+                                    onUse = { amount ->
+                                        vm.useInventoryAmount(item, amount) { message, _ ->
+                                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                        }
+                                    }
                                 )
                             }
                         }
@@ -271,9 +279,13 @@ private fun InventoryRow(
     item: IngredientUser,
     ingredientInfo: Ingredient?,
     onDelete: () -> Unit,
-    onEdit: () -> Unit
+    onEdit: () -> Unit,
+    onUse: (Double) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
+    var showUseDialog by remember(item.id) { mutableStateOf(false) }
+    var useAmountText by remember(item.id) { mutableStateOf("") }
+    val currentQuantity = item.quantity ?: 0.0
     val localFile = ingredientInfo?.localImagePath
     val remoteUrl = ingredientInfo?.image
     val imageToLoad = if (localFile != null && localFile.isNotEmpty() && File(localFile).exists())
@@ -337,9 +349,66 @@ private fun InventoryRow(
                 fontWeight = FontWeight.Medium
             )
         }
+        TextButton(
+            onClick = {
+                useAmountText = ""
+                showUseDialog = true
+            },
+            enabled = currentQuantity > 0.0
+        ) {
+            Text("Use", fontWeight = FontWeight.SemiBold)
+        }
         IconButton(onClick = onDelete) {
             Icon(Icons.Default.Delete, "Delete", tint = scheme.error)
         }
+    }
+
+    if (showUseDialog) {
+        val amount = useAmountText.toDoubleOrNull()
+        val invalidAmount = amount == null || amount <= 0.0 || amount > currentQuantity
+
+        AlertDialog(
+            onDismissRequest = { showUseDialog = false },
+            title = { Text("Use ${ingredientInfo?.ingredientName ?: "ingredient"}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Available: $currentQuantity ${item.quantityUnit.orEmpty()}")
+                    OutlinedTextField(
+                        value = useAmountText,
+                        onValueChange = { value ->
+                            if (value.isEmpty() || value.matches(Regex("^\\d*(\\.\\d*)?$"))) {
+                                useAmountText = value
+                            }
+                        },
+                        label = { Text("Amount to use") },
+                        placeholder = { Text("Enter amount") },
+                        suffix = { Text(item.quantityUnit.orEmpty()) },
+                        singleLine = true,
+                        isError = useAmountText.isNotBlank() && invalidAmount
+                    )
+                    if (useAmountText.isNotBlank() && invalidAmount) {
+                        Text(
+                            if (amount == null || amount <= 0.0) "Enter an amount greater than zero."
+                            else "You only have $currentQuantity ${item.quantityUnit.orEmpty()} available.",
+                            color = scheme.error,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !invalidAmount,
+                    onClick = {
+                        amount?.let(onUse)
+                        showUseDialog = false
+                    }
+                ) { Text("Confirm use") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUseDialog = false }) { Text("Cancel") }
+            }
+        )
     }
 }
 
@@ -364,7 +433,7 @@ private fun IngredientMasterRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .background(scheme.surfaceVariant)
-            .clickable(enabled = isPublished) { onEdit() }    // ⬅️ only published is tappable
+            .clickable(enabled = isPublished) { onEdit() }
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)

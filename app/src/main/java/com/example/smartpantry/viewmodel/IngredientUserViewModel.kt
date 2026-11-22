@@ -208,6 +208,64 @@ class IngredientUserViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+
+    // ==========================================
+    // USE AN AMOUNT FROM ONE INVENTORY ITEM
+    // ==========================================
+    fun useInventoryAmount(
+        item: IngredientUser,
+        amountToUse: Double,
+        onResult: (message: String, success: Boolean) -> Unit = { _, _ -> }
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val itemId = item.id
+                val currentQuantity = item.quantity ?: 0.0
+
+                if (itemId == null) {
+                    withContext(Dispatchers.Main) {
+                        onResult("This inventory item has no saved ID.", false)
+                    }
+                    return@launch
+                }
+                if (amountToUse <= 0.0 || amountToUse > currentQuantity) {
+                    withContext(Dispatchers.Main) {
+                        onResult("Please enter an amount greater than zero and no more than the available quantity.", false)
+                    }
+                    return@launch
+                }
+
+                val remaining = (currentQuantity - amountToUse).coerceAtLeast(0.0)
+                val updatedItem = item.copy(quantity = remaining)
+
+                // Update Room first. The inventory Flow updates the screen automatically.
+                dao.insert(updatedItem.toEntity())
+                NotificationHelper.triggerImmediateCheck(getApplication())
+
+                // Then update the matching Supabase inventory row.
+                val remoteUpdated = try {
+                    updateIngredientUser(itemId, updatedItem)
+                } catch (e: Exception) {
+                    Log.e("Inventory", "Failed to sync ingredient usage", e)
+                    null
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (remoteUpdated != null) {
+                        onResult("Used $amountToUse ${item.quantityUnit.orEmpty()}. Remaining: $remaining ${item.quantityUnit.orEmpty()}.", true)
+                    } else {
+                        onResult("Quantity updated on this device, but cloud sync failed. Please refresh and check your connection.", false)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("Inventory", "Failed to use inventory amount", e)
+                withContext(Dispatchers.Main) {
+                    onResult("Could not update the ingredient quantity: ${e.message ?: "Unknown error"}", false)
+                }
+            }
+        }
+    }
+
     // ==========================================
     // DELETE
     // ==========================================
