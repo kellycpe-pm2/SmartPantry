@@ -17,6 +17,9 @@ interface Recipe_IngredientDao {
     @Query("SELECT * FROM recipe_ingredient WHERE recipeId = :recipeId")
     suspend fun getIngredientsForRecipeOnce(recipeId: Long): List<RecipeIngredientEntity>
 
+    @Query("SELECT * FROM recipe_ingredient")
+    suspend fun getAll(): List<RecipeIngredientEntity>
+
     @Query("SELECT * FROM recipe_ingredient WHERE id = :id")
     suspend fun getById(id: Long): RecipeIngredientEntity?
 

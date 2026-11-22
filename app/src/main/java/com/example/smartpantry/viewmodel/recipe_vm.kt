@@ -48,13 +48,30 @@ data class CreateRecipeUiState(
     val canSubmit: Boolean get() = recipeName.isNotBlank() && !isSaving
 }
 
+data class RecommendedRecipeResult(
+    val recipe: Recipe, 
+    val expiredRate: Double,
+    val totalScore: Double,
+    val totalQuantity: Double,
+    val matchingCount: Int,
+    val totalIngredients: Int,
+    val missingIngredients: List<String> = emptyList()
+) {
+    val displayPercentage: Int get() = (expiredRate * 100).toInt()
+}
+
 class recipe_vm(app: Application) : AndroidViewModel(app) {
 
     private val dao by lazy { AppDatabase.get(app).recipeDao() }
     private val ingredientDao by lazy { AppDatabase.get(app).recipeIngredientDao() }
+    private val masterIngredientDao by lazy { AppDatabase.get(app).ingredientDao() }
+    private val ingredientUserDao by lazy { AppDatabase.get(app).ingredientUserDao() }
 
     private val _recipes = MutableStateFlow<List<Recipe>>(emptyList())
     val recipes: StateFlow<List<Recipe>> = _recipes.asStateFlow()
+
+    private val _recommendedRecipes = MutableStateFlow<List<RecommendedRecipeResult>>(emptyList())
+    val recommendedRecipes: StateFlow<List<RecommendedRecipeResult>> = _recommendedRecipes.asStateFlow()
 
     private val _uiState = MutableStateFlow(CreateRecipeUiState())
     val uiState: StateFlow<CreateRecipeUiState> = _uiState.asStateFlow()
@@ -355,4 +372,109 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                 ingredientDao.getIngredientsForRecipeOnce(recipeId).map { it.toModel() }
             } catch (e: Exception) { emptyList() }
         }
+
+    // ==========================================
+    // RECOMMENDATION ALGORITHM (Calculates Expired Rate)
+    // ==========================================
+    fun loadRecommendedRecipes() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isLoading.value = true
+            try {
+                // 1. Get user pantry (expired ingredients)
+                val userPantry = ingredientUserDao.getAll()
+                val pantryMap = userPantry.associateBy { it.ingredientId }
+                val masterIngredients = masterIngredientDao.getAll().associateBy { it.id }
+
+                val currentTime = System.currentTimeMillis()
+                val oneDayMs = 24 * 60 * 60 * 1000L
+
+                // 2. Get all recipes & recipe ingredients
+                val allRecipes = _recipes.value
+                val allRecipeIngredients = ingredientDao.getAll().map { it.toModel() }
+                val ingredientsByRecipe = allRecipeIngredients.groupBy { it.recipeId }
+
+                val results = mutableListOf<RecommendedRecipeResult>()
+
+                // 3. Loop each recipe
+                for (recipe in allRecipes) {
+                    val recipeId = recipe.recipeId ?: continue
+                    val ingredients = ingredientsByRecipe[recipeId] ?: emptyList()
+                    if (ingredients.isEmpty()) continue
+
+                    var totalScore = 0.0
+                    var totalQuantityIngredients = 0.0
+                    var matchingCount = 0
+                    val missingList = mutableListOf<String>()
+
+                    // Loop recipe ingredients
+                    for (item in ingredients) {
+                        val requiredQty = item.quantity ?: 1.0
+                        totalQuantityIngredients += requiredQty
+
+                        val pantryItem = pantryMap[item.ingredientId]
+                        val score = if (pantryItem != null) {
+                            val availableQty = pantryItem.quantity ?: 0.0
+
+                            // 1. Calculate how much of the ingredient you have (0.0 to 1.0)
+                            val quantityRatio = if (requiredQty > 0) {
+                                (availableQty / requiredQty).coerceIn(0.0, 1.0)
+                            } else 1.0
+
+                            if (quantityRatio >= 1.0) {
+                                matchingCount++
+                            } else {
+                                val name = masterIngredients[item.ingredientId]?.ingredientName ?: "Ingredient #${item.ingredientId}"
+                                missingList.add(name)
+                            }
+
+                            // 2. Calculate Expiry Base Score
+                            val diffMs = pantryItem.expiredDate - currentTime
+                            val leftDay = diffMs / oneDayMs
+
+                            val baseScore = when {
+                                leftDay < 0 -> 0
+                                leftDay == 0L -> 5
+                                leftDay < 4 -> 4
+                                leftDay < 7 -> 2
+                                else -> 1
+                            }
+
+                            // 3. Scale score by quantity ratio
+                            baseScore * quantityRatio
+                        } else {
+                            val name = masterIngredients[item.ingredientId]?.ingredientName ?: "Ingredient #${item.ingredientId}"
+                            missingList.add(name)
+                            0.0 // Missing from pantry
+                        }
+
+                        totalScore += requiredQty * score
+                    }
+
+                    // Formula: rate = total_score / (total_quantity_ingredients * 5)
+                    val maxScore = totalQuantityIngredients * 5.0
+                    val expiredRate = if (maxScore > 0) totalScore / maxScore else 0.0
+
+                    results.add(
+                        RecommendedRecipeResult(
+                            recipe = recipe,
+                            expiredRate = expiredRate,
+                            totalScore = totalScore,
+                            totalQuantity = totalQuantityIngredients,
+                            matchingCount = matchingCount,
+                            totalIngredients = ingredients.size,
+                            missingIngredients = missingList
+                        )
+                    )
+                }
+
+                // 4. Sort by descending (highest expiredRate first)
+                val sortedList = results.sortedByDescending { it.expiredRate }
+                _recommendedRecipes.value = sortedList
+            } catch (e: Exception) {
+                Log.e("RecipeSync", "Failed to calculate recommended recipes", e)
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
 }

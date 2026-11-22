@@ -55,24 +55,43 @@ fun InventoryScreen(
     Scaffold(
         containerColor = scheme.background,
         topBar = {
-            TopAppBar(
-                title = {
-                    Text("Pantry", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = scheme.primary)
-                },
-                actions = {
-                    IconButton(onClick = {
-                        vm.refreshInventory(force = true)
-                        ingredientVm.refreshIngredients(force = true)
-                    }) {
-                        Icon(Icons.Default.Refresh, "Refresh", tint = scheme.primary)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = scheme.background,
-                    titleContentColor = scheme.primary,
-                    actionIconContentColor = scheme.primary
+            Column {
+                TopAppBar(
+                    title = {
+                        Text("Pantry", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = scheme.primary)
+                    },
+                    actions = {
+                        IconButton(onClick = {
+                            vm.refreshInventory(force = true)
+                            ingredientVm.refreshIngredients(force = true)
+                        }) {
+                            Icon(Icons.Default.Refresh, "Refresh", tint = scheme.primary)
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = scheme.background,
+                        titleContentColor = scheme.primary,
+                        actionIconContentColor = scheme.primary
+                    )
                 )
-            )
+
+                TabRow(
+                    selectedTabIndex = selectedView,
+                    containerColor = scheme.background,
+                    contentColor = scheme.primary
+                ) {
+                    Tab(
+                        selected = selectedView == 0,
+                        onClick = { selectedView = 0 },
+                        text = { Text("My Inventory") }
+                    )
+                    Tab(
+                        selected = selectedView == 1,
+                        onClick = { selectedView = 1 },
+                        text = { Text("My Ingredients") }
+                    )
+                }
+            }
         },
         floatingActionButton = {
             FloatingActionButton(
@@ -91,43 +110,6 @@ fun InventoryScreen(
         }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-
-            // ---------- Toggle chips ----------
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = selectedView == 0,
-                    onClick = { selectedView = 0 },
-                    label = { Text("My Inventory") },
-                    leadingIcon = {
-                        Icon(Icons.Default.Inventory2, null, modifier = Modifier.size(18.dp))
-                    },
-                    modifier = Modifier.weight(1f),
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = scheme.primary,
-                        selectedLabelColor = scheme.onPrimary,
-                        selectedLeadingIconColor = scheme.onPrimary
-                    )
-                )
-                FilterChip(
-                    selected = selectedView == 1,
-                    onClick = { selectedView = 1 },
-                    label = { Text("My Ingredients") },
-                    leadingIcon = {
-                        Icon(Icons.Default.Category, null, modifier = Modifier.size(18.dp))
-                    },
-                    modifier = Modifier.weight(1f),
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = scheme.primary,
-                        selectedLabelColor = scheme.onPrimary,
-                        selectedLeadingIconColor = scheme.onPrimary
-                    )
-                )
-            }
-
-            HorizontalDivider()
 
             // ---------- Search bar (only on My Ingredients tab) ----------
             if (selectedView == 1) {
