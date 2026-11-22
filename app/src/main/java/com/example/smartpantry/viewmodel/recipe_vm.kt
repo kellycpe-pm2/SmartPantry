@@ -48,8 +48,24 @@ data class CreateRecipeUiState(
     val canSubmit: Boolean get() = recipeName.isNotBlank() && !isSaving
 }
 
+data class RecipeDetailIngredient(
+    val ingredientId: Long,
+    val ingredientName: String,
+    val category: String?,
+    val description: String?,
+    val image: String?,
+    val requiredQuantity: Double,
+    val requiredUnit: String,
+    val availableQuantity: Double,
+    val availableUnit: String,
+    val expiryDate: Long?
+) {
+    val isAvailable: Boolean
+        get() = availableQuantity >= requiredQuantity
+}
+
 data class RecommendedRecipeResult(
-    val recipe: Recipe, 
+    val recipe: Recipe,
     val expiredRate: Double,
     val totalScore: Double,
     val totalQuantity: Double,
@@ -99,6 +115,40 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
     fun getIngredientsFlow(recipeId: Long): Flow<List<RecipeIngredient>> =
         ingredientDao.getIngredientsForRecipe(recipeId)
             .map { list -> list.map { it.toModel() } }
+
+
+    /**
+     * Loads the recipe ingredients together with their master-ingredient details
+     * and the user's pantry stock. Quantities are compared in the units saved
+     * by the user; this method intentionally does not convert between units.
+     */
+    suspend fun getRecipeDetailIngredients(recipeId: Long): List<RecipeDetailIngredient> =
+        withContext(Dispatchers.IO) {
+            val recipeItems = ingredientDao.getIngredientsForRecipeOnce(recipeId).map { it.toModel() }
+            val masterIngredients = masterIngredientDao.getAll().associateBy { it.id }
+            val pantryItems = ingredientUserDao.getAll().filter { it.ingredientId != null }
+            val pantryByIngredient = pantryItems.groupBy { it.ingredientId!! }
+
+            recipeItems.map { item ->
+                val master = masterIngredients[item.ingredientId]
+                val stocks = pantryByIngredient[item.ingredientId].orEmpty()
+                val availableQuantity = stocks.sumOf { it.quantity ?: 0.0 }
+                val expiry = stocks.map { it.expiredDate }.filter { it > 0L }.minOrNull()
+
+                RecipeDetailIngredient(
+                    ingredientId = item.ingredientId,
+                    ingredientName = master?.ingredientName ?: "Ingredient #${item.ingredientId}",
+                    category = master?.category,
+                    description = master?.description,
+                    image = master?.image,
+                    requiredQuantity = item.quantity ?: 1.0,
+                    requiredUnit = item.unit.orEmpty(),
+                    availableQuantity = availableQuantity,
+                    availableUnit = stocks.firstOrNull()?.quantityUnit.orEmpty(),
+                    expiryDate = expiry
+                )
+            }
+        }
 
 
     fun createFullRecipe(ingredients: List<RecipeIngredient> = emptyList()) {

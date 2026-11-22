@@ -38,6 +38,7 @@ import com.example.smartpantry.Screen.Auth.ResetPasswordScreen
 import com.example.smartpantry.Screen.IngredientUI.CreateIngredientScreen
 import com.example.smartpantry.Screen.IngredientUI.EditIngredientScreen
 import com.example.smartpantry.Screen.IngredientUI.EditInventoryScreen
+import com.example.smartpantry.Screen.IngredientUI.RecipeDetailScreen
 import com.example.smartpantry.Screen.IngredientUI.RecipeScreen
 import com.example.smartpantry.Screen.Profile.AccountSecurityScreen
 import com.example.smartpantry.Screen.Profile.ProfileScreen
@@ -210,13 +211,13 @@ fun AppNavHost(
 
             composable("pantry")  {
                 InventoryScreen(
-                onAddInventoryClick = { navController.navigate("add_ingredient") },
+                    onAddInventoryClick = { navController.navigate("add_ingredient") },
                     onCreateIngredientClick = {navController.navigate("add")},
                     onEditIngredientClick = { id -> navController.navigate("edit_ingredient/$id") },
-                vm = ingredientUserVm,
-                ingredientVm = ingredientVm,
-                onEditClick = { id -> navController.navigate("edit_inventory/$id") }
-            )
+                    vm = ingredientUserVm,
+                    ingredientVm = ingredientVm,
+                    onEditClick = { id -> navController.navigate("edit_inventory/$id") }
+                )
             }
 
 
@@ -244,7 +245,20 @@ fun AppNavHost(
                 RecipeScreen(
                     vm = recipeVm,
                     onAddRecipeClick = { navController.navigate("create_recipe") },
-                    onRecipeClick = { id -> navController.navigate("editRecipe/$id") }
+                    onRecipeClick = { id -> navController.navigate("recipe_detail/$id") }
+                )
+            }
+
+            composable(
+                route = "recipe_detail/{id}",
+                arguments = listOf(navArgument("id") { type = NavType.LongType })
+            ) { entry ->
+                val id = entry.arguments!!.getLong("id")
+                RecipeDetailScreen(
+                    recipeId = id,
+                    onBackClick = { navController.popBackStack() },
+                    onEditClick = { navController.navigate("editRecipe/$id") },
+                    recipeVm = recipeVm
                 )
             }
 
@@ -336,12 +350,12 @@ fun AppNavHost(
 
                 AddInventoryFlowScreen({
 
-                        if (!popped) {
-                            popped = true
-                            if (navController.currentBackStackEntry?.destination?.route == "add_ingredient") {
-                                navController.popBackStack(route = "add_ingredient", inclusive = true)
-                            }
+                    if (!popped) {
+                        popped = true
+                        if (navController.currentBackStackEntry?.destination?.route == "add_ingredient") {
+                            navController.popBackStack(route = "add_ingredient", inclusive = true)
                         }
+                    }
                 },ingredientUserVm)
             }
 
@@ -358,7 +372,7 @@ fun AppNavHost(
                             }
                         }
                     },
-                     recipeVm,ingredientVm
+                    recipeVm,ingredientVm
                 )
             }
         }
