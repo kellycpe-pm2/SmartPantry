@@ -4,28 +4,29 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import java.io.File
 
-private var pendingUri: Uri? = null
-
 @Composable
 fun rememberCameraCapture(onImagePicked: (Uri) -> Unit): () -> Unit {
     val context = LocalContext.current
-    val launcher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicture()
-    ) { success ->
-        if (success) pendingUri?.let(onImagePicked)
+    val currentOnPicked by rememberUpdatedState(onImagePicked)
+    var pendingUri by rememberSaveable { mutableStateOf<String?>(null) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        val pending = pendingUri
         pendingUri = null
+        if (success && pending != null) currentOnPicked(Uri.parse(pending))
     }
-    return remember(context) {
-        {
-            val file = File(context.cacheDir, "photo_${System.currentTimeMillis()}.jpg")
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-            pendingUri = uri
-            launcher.launch(uri)
-        }
+    return {
+        val file = File(context.cacheDir, "photo_${System.currentTimeMillis()}.jpg")
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        pendingUri = uri.toString()
+        launcher.launch(uri)
     }
 }

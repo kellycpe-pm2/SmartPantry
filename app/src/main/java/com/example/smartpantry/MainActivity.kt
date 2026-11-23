@@ -43,9 +43,6 @@ class MainActivity : ComponentActivity() {
         scheduleExpiryCheckWorker()
 
         setContent {
-            Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-                throwable.printStackTrace()
-            }
             SmartPantryTheme {
                 AppTheme {
                     Surface(modifier = Modifier.fillMaxSize()) {

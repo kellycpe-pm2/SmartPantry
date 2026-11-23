@@ -1,5 +1,6 @@
 package com.example.smartpantry.ui.home
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -30,7 +31,13 @@ import androidx.compose.ui.unit.sp
 import com.example.smartpantry.R
 
 @Composable
-fun UserDashboardScreen() {
+fun UserDashboardScreen(
+    onOpenCommunityPost: (Long) -> Unit = {},
+    onShoppingList: () -> Unit = {},
+    onPantry: () -> Unit = {},
+    onRecipes: () -> Unit = {},
+    onRecords: () -> Unit = {}
+) {
     val scheme = MaterialTheme.colorScheme
     val isDark = scheme.background.luminance() < 0.5f
 
@@ -142,15 +149,17 @@ fun UserDashboardScreen() {
 
         // --- Shortcuts ---
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            HomeShortcut("Pantry",       Icons.Filled.ShoppingCart)
-            HomeShortcut("Find recipes", Icons.Filled.RestaurantMenu)
-            HomeShortcut("Food log",     Icons.Filled.EditNote)
+            HomeShortcut("Pantry",       Icons.Filled.ShoppingCart, onPantry)
+            HomeShortcut("Find recipes", Icons.Filled.RestaurantMenu, onRecipes)
+            HomeShortcut("Food log",     Icons.Filled.EditNote, onRecords)
         }
 
         // --- Shopping summary ---
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .clickable(onClick = onShoppingList)
                 .background(scheme.surfaceVariant, RoundedCornerShape(14.dp))
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -170,38 +179,12 @@ fun UserDashboardScreen() {
             }
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("Before you shop", fontWeight = FontWeight.SemiBold, color = scheme.onBackground)
-                Text("3 pending items", color = scheme.onSurfaceVariant, fontSize = 12.sp)
+                Text("Open your shopping list →", color = scheme.onSurfaceVariant, fontSize = 12.sp)
             }
         }
 
-        // --- Community recipe ---
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Discover community recipes",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold, color = scheme.onBackground)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(scheme.surfaceVariant)
-                    .padding(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Image(
-                    painter = painterResource(R.drawable.home_nasi_goreng),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(width = 88.dp, height = 60.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                )
-                Column(Modifier.weight(1f)) {
-                    Text("Nasi Goreng", fontWeight = FontWeight.SemiBold, color = scheme.onBackground)
-                    Text("by Aina", color = scheme.onSurfaceVariant, fontSize = 12.sp)
-                }
-                Text("→", color = scheme.primary, modifier = Modifier.padding(end = 4.dp))
-            }
-        }
+        // Read published recipes from the same API as the Community feed.
+        CommunityDiscover(onOpenPost = onOpenCommunityPost, onBrowse = onRecipes)
     }
 }
 
@@ -235,10 +218,10 @@ private fun CompactExpiryRow(name: String, detail: String, imageRes: Int) {
 }
 
 @Composable
-private fun HomeShortcut(label: String, icon: ImageVector) {
+private fun HomeShortcut(label: String, icon: ImageVector, onClick: () -> Unit = {}) {
     val scheme = MaterialTheme.colorScheme
     Column(
-        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+        modifier = Modifier.clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
