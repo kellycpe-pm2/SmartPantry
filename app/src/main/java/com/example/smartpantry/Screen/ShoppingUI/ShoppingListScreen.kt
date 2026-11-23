@@ -1,6 +1,11 @@
-package com.example.smartpantry
+package com.example.smartpantry.Screen.ShoppingUI
+
+import com.example.smartpantry.R
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -28,28 +33,37 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import com.example.smartpantry.storage.remote.RemoteShoppingItem
+import com.example.smartpantry.storage.remote.ShoppingRepository
+import java.time.Instant
+import java.time.ZoneId
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 private data class ListItem(
-    val id: Int,
+    val id: Long,
     val name: String,
-    val quantity: Int,
+    val quantity: Double,
     val unit: String,
-    val unitPriceSen: Int? = null,
     val imageRes: Int? = null,
     val purchased: Boolean = false,
-    val photoUri: String? = null
+    val photoUri: String? = null,
+    val ingredientId: Long? = null,
+    val customIngredientId: Long? = null,
+    val plannedQuantity: Double = quantity
 )
 
 private data class PantryBatch(
     val name: String,
-    val quantity: Int,
+    val quantity: Double,
     val unit: String,
     val expiry: LocalDate,
     val purchasedOn: LocalDate? = null,
     val note: String = "",
-    val sourceItemId: Int? = null,
+    val sourceItemId: Long? = null,
+    val ingredientId: Long? = null,
     val imageRes: Int? = null,
     val photoUri: String? = null
 )
@@ -59,21 +73,30 @@ private enum class ShoppingPage { LIST, REVIEW, PANTRY }
 private val shoppingUnits = listOf("g", "kg", "mL", "L", "pcs", "bag", "carton")
 private val shopShape = RoundedCornerShape(18.dp)
 
-private val sampleList = listOf(
-    ListItem(1, "Eggs", 12, "pcs", 50, R.drawable.home_eggs),
-    ListItem(2, "Tomatoes", 4, "pcs", 80, R.drawable.home_tomatoes),
-    ListItem(3, "Milk", 2, "carton", 300, R.drawable.ingredient_milk),
-    ListItem(4, "Rice", 1, "bag", imageRes = R.drawable.ingredient_rice, purchased = true)
+private val catalogImages = mapOf(
+    96L to R.drawable.home_eggs,
+    9L to R.drawable.home_tomatoes,
+    86L to R.drawable.ingredient_milk,
+    100L to R.drawable.ingredient_rice,
+    42L to R.drawable.ingredient_orange,
+    13L to R.drawable.ingredient_onion
 )
 
-private val shoppingIngredients = listOf(
-    ListItem(0, "Eggs", 1, "pcs", imageRes = R.drawable.home_eggs),
-    ListItem(0, "Tomatoes", 1, "pcs", imageRes = R.drawable.home_tomatoes),
-    ListItem(0, "Milk", 1, "carton", imageRes = R.drawable.ingredient_milk),
-    ListItem(0, "Rice", 1, "bag", imageRes = R.drawable.ingredient_rice),
-    ListItem(0, "Orange", 1, "pcs", imageRes = R.drawable.ingredient_orange),
-    ListItem(0, "Onion", 1, "pcs", imageRes = R.drawable.ingredient_onion)
-)
+private fun normalizedUnit(unit: String?): String? = when (unit?.trim()?.lowercase(Locale.ROOT)) {
+    "piece", "pieces", "pc", "pcs" -> "pcs"
+    "ml" -> "mL"
+    "l" -> "L"
+    "cartons" -> "carton"
+    else -> unit?.trim()?.lowercase(Locale.ROOT)
+}
+
+private fun formatQuantity(quantity: Double): String =
+    quantity.toBigDecimal().stripTrailingZeros().toPlainString()
+
+private fun parseQuantity(text: String, unit: String): Double? =
+    text.replace(',', '.').toDoubleOrNull()?.takeIf {
+        it.isFinite() && it > 0 && (unit in setOf("g", "kg", "mL", "L") || it % 1 == 0.0)
+    }
 
 private fun parseDate(value: String): LocalDate? =
     runCatching { LocalDate.parse(value) }.getOrNull()
@@ -81,23 +104,75 @@ private fun parseDate(value: String): LocalDate? =
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ShoppingListScreen(onBack: () -> Unit) {
-    // 四个子页面共用同一份清单和库存。切换子页面时，资料不会重置。
-    var items by remember { mutableStateOf(sampleList) }
-    var nextId by remember { mutableIntStateOf(5) }
-    var batches by remember {
-        val today = LocalDate.now()
-        mutableStateOf(
-            listOf(
-                PantryBatch("Eggs", 6, "pcs", today.plusDays(1)),
-                PantryBatch("Eggs", 12, "pcs", today.plusDays(7)),
-                PantryBatch("Tomatoes", 3, "pcs", today.plusDays(4))
-            )
-        )
+    val repository = remember { ShoppingRepository() }
+    val scope = rememberCoroutineScope()
+    var items by remember { mutableStateOf(emptyList<ListItem>()) }
+    var catalog by remember { mutableStateOf(emptyList<ListItem>()) }
+    var batches by remember { mutableStateOf(emptyList<PantryBatch>()) }
+    var ready by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+
+    fun mutate(block: suspend () -> Unit) {
+        if (busy) return
+        busy = true
+        message = null
+        scope.launch {
+            try {
+                block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("ShoppingList", "Supabase operation failed", e)
+                message = "Could not sync with Supabase. Check your connection and try again."
+            } finally {
+                busy = false
+            }
+        }
     }
+
+    suspend fun load() {
+        val system = repository.catalog().mapNotNull { ingredient ->
+            val id = ingredient.ingredientId ?: return@mapNotNull null
+            val unit = normalizedUnit(ingredient.unit)
+            ListItem(0, ingredient.ingredientName, 1.0, unit.orEmpty(),
+                imageRes = catalogImages[id], ingredientId = id)
+        }
+        val custom = repository.customIngredients().map {
+            ListItem(0, it.name, 1.0, "pcs", customIngredientId = it.id)
+        }
+        val bySystemId = system.associateBy { it.ingredientId }
+        val byCustomId = custom.associateBy { it.customIngredientId }
+        val remoteItems = repository.items().map { row ->
+            val entry = if (row.ingredientId != null) bySystemId[row.ingredientId]
+                else byCustomId[row.customIngredientId]
+            (entry ?: ListItem(0, "Unavailable ingredient", 1.0, row.unit)).copy(
+                id = row.id, quantity = row.purchaseQuantity, unit = row.unit,
+                purchased = row.isPurchased, ingredientId = row.ingredientId,
+                customIngredientId = row.customIngredientId, plannedQuantity = row.plannedQuantity
+            )
+        }
+        catalog = system.sortedWith(compareBy({ it.ingredientId !in catalogImages.keys }, { it.name })) +
+            custom.sortedBy { it.name }
+        items = remoteItems
+        ready = true
+        batches = emptyList()
+        batches = repository.pantry().mapNotNull { row ->
+            val id = row.ingredientId ?: return@mapNotNull null
+            val entry = bySystemId[id] ?: return@mapNotNull null
+            val quantity = row.quantity?.takeIf { it.isFinite() && it > 0 } ?: return@mapNotNull null
+            val unit = normalizedUnit(row.quantityUnit) ?: return@mapNotNull null
+            val expiry = Instant.ofEpochMilli(row.expiredDate)
+                .atZone(ZoneId.systemDefault()).toLocalDate()
+            PantryBatch(entry.name, quantity, unit, expiry, ingredientId = id)
+        }
+    }
+
+    LaunchedEffect(repository) { mutate { load() } }
 
     var page by remember { mutableStateOf(ShoppingPage.LIST) }
     var editingItem by remember { mutableStateOf<ListItem?>(null) }
-    var reviewedIds by remember { mutableStateOf(emptySet<Int>()) }
+    var reviewedIds by remember { mutableStateOf(emptySet<Long>()) }
     var selectedItem by remember { mutableStateOf<ListItem?>(null) }
 
     val toBuy = items.filterNot { it.purchased }
@@ -116,8 +191,31 @@ internal fun ShoppingListScreen(onBack: () -> Unit) {
         }
     }
 
-    fun replaceItem(updated: ListItem) {
-        items = items.map { if (it.id == updated.id) updated else it }
+    suspend fun saveItem(item: ListItem) {
+        var customId = item.customIngredientId
+        if (item.ingredientId == null && customId == null) {
+            customId = catalog.firstOrNull {
+                it.customIngredientId != null && it.name.equals(item.name, ignoreCase = true)
+            }?.customIngredientId
+            if (customId == null) {
+                val created = repository.createCustomIngredient(item.name)
+                customId = created.id
+                catalog = catalog + item.copy(id = 0, customIngredientId = created.id)
+            }
+        }
+        val saved = repository.save(RemoteShoppingItem(
+            item.id, item.ingredientId, customId, item.plannedQuantity,
+            item.quantity, item.unit, item.purchased
+        ))
+        val updated = item.copy(id = saved.id, customIngredientId = saved.customIngredientId)
+        items = items.filterNot { it.id == updated.id } + updated
+        items = items.sortedBy { it.id }
+    }
+
+    fun removeItem(item: ListItem, after: () -> Unit = {}) = mutate {
+        repository.remove(item.id)
+        items = items.filterNot { it.id == item.id }
+        after()
     }
 
     // LIST 的返回由 SmartPantryApp 处理，子页面则先回到上一层。
@@ -161,6 +259,11 @@ internal fun ShoppingListScreen(onBack: () -> Unit) {
                         )
                     }
 
+                    if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    message?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error)
+                        TextButton(onClick = { mutate { load() } }) { Text("Reload") }
+                    }
                     when (page) {
                         ShoppingPage.LIST -> {
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -189,22 +292,22 @@ internal fun ShoppingListScreen(onBack: () -> Unit) {
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text("To buy", style = MaterialTheme.typography.titleLarge)
-                                Button(onClick = { editingItem = ListItem(0, "", 1, "pcs") }) {
+                                Button(enabled = ready && !busy, onClick = { editingItem = ListItem(0, "", 1.0, "pcs") }) {
                                     Text("+ Add item")
                                 }
                             }
                             ShoppingPanel {
-                                if (toBuy.isEmpty()) Text("Nothing to buy yet.")
+                                if (ready && toBuy.isEmpty()) Text("Nothing to buy yet.")
                                 toBuy.forEachIndexed { index, item ->
                                     if (index > 0) HorizontalDivider()
                                     ShoppingRow(
                                         item = item,
                                         addedToPantry = false,
                                         onToggle = {
-                                            replaceItem(item.copy(purchased = it))
+                                            mutate { saveItem(item.copy(purchased = it)) }
                                         },
                                         onEdit = { editingItem = item },
-                                        onRemove = { items = items.filterNot { it.id == item.id } },
+                                        onRemove = { removeItem(item) },
                                         onAddToPantry = {}
                                     )
                                 }
@@ -212,18 +315,17 @@ internal fun ShoppingListScreen(onBack: () -> Unit) {
 
                             Text("Purchased", style = MaterialTheme.typography.titleLarge)
                             ShoppingPanel {
-                                if (purchased.isEmpty()) Text("No purchased items yet.")
+                                if (ready && purchased.isEmpty()) Text("No purchased items yet.")
                                 purchased.forEachIndexed { index, item ->
                                     if (index > 0) HorizontalDivider()
-                                    val added = batches.any { it.sourceItemId == item.id }
                                     ShoppingRow(
                                         item = item,
-                                        addedToPantry = added,
+                                        addedToPantry = false,
                                         onToggle = {
-                                            replaceItem(item.copy(purchased = it))
+                                            mutate { saveItem(item.copy(purchased = it)) }
                                         },
                                         onEdit = { editingItem = item },
-                                        onRemove = { items = items.filterNot { it.id == item.id } },
+                                        onRemove = { removeItem(item) },
                                         onAddToPantry = {
                                             selectedItem = item
                                             page = ShoppingPage.PANTRY
@@ -238,23 +340,20 @@ internal fun ShoppingListScreen(onBack: () -> Unit) {
                             handled = reviewedIds,
                             onKeep = { reviewedIds = reviewedIds + it },
                             onChange = { item, quantity ->
-                                replaceItem(item.copy(quantity = quantity))
-                                reviewedIds = reviewedIds + item.id
+                                mutate {
+                                    saveItem(item.copy(quantity = quantity))
+                                    reviewedIds = reviewedIds + item.id
+                                }
                             },
-                            onRemove = { item -> items = items.filterNot { it.id == item.id } }
+                            onRemove = { item -> removeItem(item) }
                         )
 
                         ShoppingPage.PANTRY -> selectedItem?.let { item ->
                             PantryEditor(
                                 item = item,
                                 onCancel = ::goBack,
-                                onConfirm = { batch ->
-                                    // 同一个已购项目只允许转入一次。
-                                    if (items.any { it.id == item.id && it.purchased } &&
-                                        batches.none { it.sourceItemId == item.id }
-                                    ) {
-                                        batches = batches + batch
-                                    }
+                                onConfirm = {
+                                    message = "Pantry transfer requires the database transfer function."
                                     page = ShoppingPage.LIST
                                 }
                             )
@@ -283,26 +382,23 @@ internal fun ShoppingListScreen(onBack: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    if (item.id == 0) "Add item" else "Edit item",
+                    if (item.id == 0L) "Add item" else "Edit item",
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold
                 )
                 ShoppingEditor(
                     item = item,
+                    catalog = catalog,
+                    busy = busy,
+                    error = message,
                     onSave = { edited ->
-                        if (item.id == 0) items = items + edited.copy(id = nextId++)
-                        else {
-                            if (item.name != edited.name || item.quantity != edited.quantity ||
-                                item.unit != edited.unit
-                            ) reviewedIds = reviewedIds - item.id
-                            replaceItem(edited)
+                        mutate {
+                            saveItem(edited)
+                            reviewedIds = reviewedIds - item.id
+                            editingItem = null
                         }
-                        editingItem = null
                     },
-                    onRemove = {
-                        items = items.filterNot { it.id == item.id }
-                        editingItem = null
-                    }
+                    onRemove = { removeItem(item) { editingItem = null } }
                 )
             }
         }
@@ -387,25 +483,19 @@ private fun ShoppingRow(
             Column(Modifier.weight(1f).padding(start = 6.dp)) {
                 Text(item.name, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "${item.quantity} ${item.unit}",
+                    "${formatQuantity(item.quantity)} ${item.unit}",
                     style = MaterialTheme.typography.bodySmall
                 )
-                item.unitPriceSen?.let { sen ->
-                    Text(
-                        String.format(Locale.US, "RM %.2f / %s", sen / 100.0, item.unit),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+
             }
             if (item.purchased) {
                 if (addedToPantry) {
                     Text("Stored", style = MaterialTheme.typography.labelSmall)
                 } else {
-                    TextButton(
+                    FilledTonalIconButton(
                         onClick = onAddToPantry,
                         modifier = Modifier.semantics { contentDescription = "Add ${item.name} to pantry" }
-                    ) { Text("+ Pantry", style = MaterialTheme.typography.labelMedium) }
+                    ) { ShoppingActionIcon(cart = true) }
                 }
             }
             var menu by remember(item.id) { mutableStateOf(false) }
@@ -445,84 +535,63 @@ private fun ShoppingRow(
 @Composable
 private fun ShoppingEditor(
     item: ListItem,
+    catalog: List<ListItem>,
+    busy: Boolean,
+    error: String?,
     onSave: (ListItem) -> Unit,
     onRemove: () -> Unit
 ) {
-    val context = LocalContext.current
-    val customIngredients = remember(context) {
-        context.getSharedPreferences("shopping_custom_ingredients", 0)
-    }
     var ingredient by remember(item) {
         mutableStateOf(item.takeIf { it.name.isNotBlank() })
     }
-    var quantityText by remember { mutableStateOf(item.quantity.toString()) }
+    var quantityText by remember { mutableStateOf(formatQuantity(item.quantity)) }
     var unit by remember(item) {
         mutableStateOf(if (item.unit == "cartons") "carton" else item.unit)
     }
-    var priceText by remember(item) {
-        mutableStateOf(item.unitPriceSen?.let { String.format(Locale.US, "%.2f", it / 100.0) }.orEmpty())
-    }
-    val priceSen = priceText.replace(',', '.').toBigDecimalOrNull()
-        ?.movePointRight(2)?.toInt()
     var confirmRemove by remember { mutableStateOf(false) }
-
-    val quantity = quantityText.toIntOrNull()
-    val valid = ingredient != null && quantity != null && quantity in 1..999 &&
-            (priceText.isBlank() || priceSen != null)
+    val quantity = parseQuantity(quantityText, unit)
+    val valid = ingredient != null && quantity != null && unit in shoppingUnits
 
     ingredient?.let { selected ->
         ShoppingPhotoEditor(selected) { ingredient = selected.copy(photoUri = it) }
     }
-    ShoppingIngredientPicker(selected = ingredient, onSelection = {
+    ShoppingIngredientPicker(catalog = catalog, selected = ingredient, onSelection = {
         ingredient = it
-        if (it != null && item.id == 0) unit = it.unit
+        if (it != null && item.id == 0L) unit = it.unit
     })
     ShoppingQuantityRow(quantityText, unit, { quantityText = it }, { unit = it })
 
-    OutlinedTextField(
-        value = priceText,
-        onValueChange = { input ->
-            if (input.matches(Regex("[0-9]{0,6}([.,][0-9]{0,2})?"))) priceText = input
-        },
-        label = { Text("Unit price (optional)") },
-        prefix = { Text("RM ") },
-        supportingText = { Text("Price per $unit") },
-        isError = priceText.isNotBlank() && priceSen == null,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp)
-    )
+    error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
     Button(
         modifier = Modifier.fillMaxWidth(),
-        enabled = valid,
+        enabled = valid && !busy,
         onClick = {
             val selected = ingredient ?: return@Button
             val newQuantity = quantity ?: return@Button
-
-            if (selected.imageRes == null) {
-                customIngredients.edit()
-                    .putString(selected.name, selected.photoUri.orEmpty())
-                    .apply()
-            }
 
             onSave(
                 item.copy(
                     name = selected.name,
                     quantity = newQuantity,
                     unit = unit,
-                    unitPriceSen = priceSen,
+                    plannedQuantity = if (
+                        item.id == 0L || item.quantity != newQuantity || item.unit != unit ||
+                        item.ingredientId != selected.ingredientId ||
+                        item.customIngredientId != selected.customIngredientId
+                    ) newQuantity else item.plannedQuantity,
+                    ingredientId = selected.ingredientId,
+                    customIngredientId = selected.customIngredientId,
                     imageRes = selected.imageRes,
                     photoUri = selected.photoUri
                 )
             )
         }
     ) {
-        Text(if (item.id == 0) "Add item" else "Save changes")
+        Text(if (item.id == 0L) "Add item" else "Save changes")
     }
 
-    if (item.id != 0) {
+    if (item.id != 0L) {
         TextButton(onClick = { confirmRemove = true }) {
             Text("Remove item", color = MaterialTheme.colorScheme.error)
         }
@@ -543,9 +612,9 @@ private fun ShoppingEditor(
 
 private data class ReviewSuggestion(
     val item: ListItem,
-    val stock: Long,
-    val buy: Int,
-    val expiring: Long,
+    val stock: Double,
+    val buy: Double,
+    val expiring: Double,
     val batches: List<PantryBatch>,
     val differentUnit: Boolean
 )
@@ -561,30 +630,50 @@ private fun buildReviewSuggestions(
     batches: List<PantryBatch>
 ): List<ReviewSuggestion> {
     val today = LocalDate.now()
-    val demand = mutableMapOf<Pair<String, String>, Long>()
-    return items.map { item ->
-        val key = item.name.trim().lowercase(Locale.ROOT) to item.unit
-        val used = demand[key] ?: 0L
-        demand[key] = used + item.quantity
-        val matching = batches.filter {
-            it.name.trim().equals(item.name.trim(), true) &&
-                    it.quantity > 0 && !it.expiry.isBefore(today)
+    val reserved = mutableMapOf<Pair<Long, String>, Double>()
+    return items.mapNotNull { item ->
+        val id = item.ingredientId ?: return@mapNotNull null
+        val group = when (item.unit) {
+            "g", "kg" -> "g"
+            "mL", "L" -> "mL"
+            else -> item.unit
         }
-        val comparable = matching.filter { it.unit == item.unit }.sortedBy { it.expiry }
-        val stock = (comparable.sumOf { it.quantity.toLong() } - used).coerceAtLeast(0)
+        val factor = if (item.unit in setOf("kg", "L")) 1000.0 else 1.0
+        val key = id to group
+        val used = reserved[key] ?: 0.0
+        val matching = batches.filter { it.ingredientId == id && !it.expiry.isBefore(today) }
+        val comparable = matching.mapNotNull { batch ->
+            val base = when (batch.unit) {
+                "kg" -> "g"
+                "L" -> "mL"
+                else -> batch.unit
+            }
+            if (base != group) return@mapNotNull null
+            val batchFactor = if (batch.unit in setOf("kg", "L")) 1000.0 else 1.0
+            batch.copy(quantity = batch.quantity * batchFactor / factor, unit = item.unit)
+        }.sortedBy { it.expiry }
+
+        val stock = (comparable.sumOf { it.quantity } - used / factor).coerceAtLeast(0.0)
+        val covered = minOf(item.plannedQuantity, stock)
+        reserved[key] = used + covered * factor
         val expiring = (comparable.filter { !it.expiry.isAfter(today.plusDays(1)) }
-            .sumOf { it.quantity.toLong() } - used).coerceAtLeast(0)
-        ReviewSuggestion(item, stock, (item.quantity - stock).coerceAtLeast(0).toInt(),
-            expiring, comparable, comparable.isEmpty() && matching.isNotEmpty())
+            .sumOf { it.quantity } - used / factor).coerceAtLeast(0.0)
+        val missing = (item.plannedQuantity - stock).coerceAtLeast(0.0)
+        val buy = if (group in setOf("g", "mL")) {
+            java.math.BigDecimal.valueOf(missing).setScale(6, java.math.RoundingMode.HALF_UP).toDouble()
+        } else kotlin.math.ceil(missing)
+        ReviewSuggestion(item, stock, buy, expiring, comparable,
+            comparable.isEmpty() && matching.isNotEmpty() && item.quantity == item.plannedQuantity)
     }
+
 }
 
 @Composable
 private fun ShoppingReview(
     suggestions: List<ReviewSuggestion>,
-    handled: Set<Int>,
-    onKeep: (Int) -> Unit,
-    onChange: (ListItem, Int) -> Unit,
+    handled: Set<Long>,
+    onKeep: (Long) -> Unit,
+    onChange: (ListItem, Double) -> Unit,
     onRemove: (ListItem) -> Unit
 ) {
     var showUnchanged by remember { mutableStateOf(false) }
@@ -592,7 +681,7 @@ private fun ShoppingReview(
     var adjustment by remember { mutableStateOf<ReviewSuggestion?>(null) }
     val pending = suggestions.filter {
         it.item.id !in handled && it.needsReview
-    }.sortedBy { it.buy == 0 }
+    }.sortedBy { it.buy == 0.0 }
     val unchanged = suggestions.filter { it !in pending && it.item.id !in handled }
     val colors = MaterialTheme.colorScheme
 
@@ -616,8 +705,8 @@ private fun ShoppingReview(
                     Text(
                         when {
                             suggestion.differentUnit -> "Check pantry units"
-                            suggestion.buy == 0 -> "You may be able to skip buying"
-                            else -> "Buy ${suggestion.buy} instead of ${item.quantity}"
+                            suggestion.buy == 0.0 -> "You may be able to skip buying"
+                            else -> "Buy ${formatQuantity(suggestion.buy)} instead of ${formatQuantity(item.quantity)}"
                         },
                         Modifier.background(colors.secondaryContainer, RoundedCornerShape(8.dp))
                             .padding(horizontal = 8.dp, vertical = 5.dp),
@@ -626,14 +715,14 @@ private fun ShoppingReview(
                     )
                     Text(
                         if (suggestion.differentUnit) "Stock uses a different unit."
-                        else "${item.quantity} ${item.unit} planned · ${suggestion.stock} ${item.unit} in pantry",
+                        else "${formatQuantity(item.plannedQuantity)} ${item.unit} planned · ${formatQuantity(suggestion.stock)} ${item.unit} in pantry",
                         color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
                     )
                     if (suggestion.expiring > 0) {
-                        Text("● Use ${suggestion.expiring} ${item.unit} expiring by tomorrow first",
+                        Text("● Use ${formatQuantity(suggestion.expiring)} ${item.unit} expiring by tomorrow first",
                             color = colors.tertiary, style = MaterialTheme.typography.bodySmall)
                     }
-                    if (suggestion.batches.isNotEmpty() && (suggestion.expiring > 0 || suggestion.buy == 0)) {
+                    if (suggestion.batches.isNotEmpty() && (suggestion.expiring > 0 || suggestion.buy == 0.0)) {
                         FilledTonalButton(
                             onClick = { showBatches = !showBatches },
                             modifier = Modifier.fillMaxWidth(),
@@ -641,10 +730,10 @@ private fun ShoppingReview(
                         ) {
                             val count = suggestion.batches.size
                             Text("$count pantry ${if (count == 1) "batch" else "batches"}", Modifier.weight(1f))
-                            Text(if (showBatches) "⌃" else "⌄")
+                            ShoppingActionIcon(expanded = showBatches)
                         }
                         if (showBatches) suggestion.batches.forEach {
-                            Text("${it.quantity} ${it.unit} · ${it.expiry}", style = MaterialTheme.typography.bodySmall)
+                            Text("${formatQuantity(it.quantity)} ${it.unit} · ${it.expiry}", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
@@ -654,12 +743,12 @@ private fun ShoppingReview(
                     TextButton(onClick = {
                         adjustment = suggestion
                     }) {
-                        val unit = if (suggestion.buy == 1 && item.unit == "pcs") "pc" else item.unit
-                        Text("Change to ${suggestion.buy} $unit →")
+                        val unit = if (suggestion.buy == 1.0 && item.unit == "pcs") "pc" else item.unit
+                        Text("Change to ${formatQuantity(suggestion.buy)} $unit →")
                     }
                 }
             }
-            if (!suggestion.differentUnit && suggestion.buy == 0) {
+            if (!suggestion.differentUnit && suggestion.buy == 0.0) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { removal = item }, modifier = Modifier.weight(1f)) {
                         Text("Remove from list")
@@ -684,7 +773,7 @@ private fun ShoppingReview(
             Text(if (showUnchanged) "↑" else "↓")
         }
         if (showUnchanged) unchanged.forEach {
-            Text("${it.item.name} · ${it.item.quantity} ${it.item.unit}")
+            Text("${it.item.name} · ${formatQuantity(it.item.quantity)} ${it.item.unit}")
         }
     }
     adjustment?.let { suggestion ->
@@ -693,7 +782,7 @@ private fun ShoppingReview(
             onDismissRequest = { adjustment = null },
             title = { Text("Buy fewer ${item.name.lowercase(Locale.ROOT)}?") },
             text = {
-                Text("Change ${item.quantity} ${item.unit} to ${suggestion.buy} ${item.unit} on your shopping list.")
+                Text("Change ${formatQuantity(item.quantity)} ${item.unit} to ${formatQuantity(suggestion.buy)} ${item.unit} on your shopping list.")
             },
             confirmButton = {
                 Button(onClick = {
@@ -725,18 +814,18 @@ private fun PantryEditor(
 ) {
     var name by remember { mutableStateOf(item.name) }
     var photo by remember { mutableStateOf(item.photoUri) }
-    var quantityText by remember { mutableStateOf(item.quantity.toString()) }
+    var quantityText by remember { mutableStateOf(formatQuantity(item.quantity)) }
     var unit by remember { mutableStateOf(item.unit) }
     var purchasedOnText by remember { mutableStateOf(LocalDate.now().toString()) }
     var expiryText by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
 
-    val quantity = quantityText.toIntOrNull()
+    val quantity = parseQuantity(quantityText, unit)
     val purchasedOn = parseDate(purchasedOnText)
     val expiry = parseDate(expiryText)
     val validPurchaseDate = purchasedOn != null && !purchasedOn.isAfter(LocalDate.now())
     val validExpiry = expiry != null && purchasedOn != null && !expiry.isBefore(purchasedOn)
-    val valid = name.isNotBlank() && quantity != null && quantity in 1..999 &&
+    val valid = name.isNotBlank() && quantity != null &&
             validPurchaseDate && validExpiry
 
     ShoppingPhotoEditor(item.copy(name = name, photoUri = photo)) { photo = it }
@@ -817,16 +906,17 @@ private fun ShoppingQuantityRow(
     ) {
         OutlinedTextField(
             value = quantity,
-            onValueChange = { if (it.length <= 3 && it.all { digit -> digit in '0'..'9' }) onQuantity(it) },
+            onValueChange = { if (it.length <= 16 && it.matches(Regex("[0-9]*([.,][0-9]*)?"))) onQuantity(it) },
             modifier = Modifier.weight(1f),
             label = { Text("Quantity") },
             singleLine = true,
-            isError = quantity.isNotEmpty() && quantity.toIntOrNull() !in 1..999,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            isError = quantity.isNotEmpty() && parseQuantity(quantity, unit) == null,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
         )
         Box(Modifier.weight(1f)) {
             OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                Text("Unit · $unit ▾")
+                Text("Unit · $unit", Modifier.weight(1f))
+                ShoppingActionIcon(expanded = expanded)
             }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 shoppingUnits.forEach {
@@ -870,7 +960,7 @@ private fun ShoppingCalendar(
         ) {
             Text(date?.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH))
                 ?: "Select date", Modifier.weight(1f))
-            Text("▾")
+            ShoppingActionIcon()
         }
     }
 }
@@ -912,23 +1002,11 @@ private fun ShoppingPhotoEditor(item: ListItem, onPhotoChange: (String?) -> Unit
 
 @Composable
 private fun ShoppingIngredientPicker(
+    catalog: List<ListItem>,
     selected: ListItem?,
     onSelection: (ListItem?) -> Unit
 ) {
     val context = LocalContext.current
-    val preferences = remember(context) {
-        context.getSharedPreferences("shopping_custom_ingredients", 0)
-    }
-    val catalog = remember(preferences) {
-        val saved = preferences.all.mapNotNull { (name, value) ->
-            val photo = value as? String ?: return@mapNotNull null
-            ListItem(0, name, 1, "pcs", photoUri = photo.ifBlank { null })
-        }
-        (shoppingIngredients + saved)
-            .distinctBy { it.name.lowercase(Locale.ROOT) }
-            .sortedBy { it.name.lowercase(Locale.ROOT) }
-    }
-
     var query by remember { mutableStateOf(selected?.name.orEmpty()) }
     var expanded by remember { mutableStateOf(false) }
     var creatingCustom by remember { mutableStateOf(false) }
@@ -967,7 +1045,7 @@ private fun ShoppingIngredientPicker(
             placeholder = { Text("Search ingredients") },
             trailingIcon = {
                 IconButton(onClick = { expanded = !expanded }) {
-                    Text(if (expanded) "▴" else "▾")
+                    ShoppingActionIcon(expanded = expanded)
                 }
             },
             modifier = Modifier.fillMaxWidth(),
@@ -1057,7 +1135,7 @@ private fun ShoppingIngredientPicker(
                     enabled = name.isNotEmpty() && !alreadyExists,
                     onClick = {
                         query = name
-                        onSelection(ListItem(0, name, 1, "pcs", photoUri = customPhoto))
+                        onSelection(ListItem(0, name, 1.0, "pcs", photoUri = customPhoto))
                         creatingCustom = false
                     }
                 ) {
@@ -1110,6 +1188,33 @@ private fun ShoppingCustomPhoto(photoUri: String?, modifier: Modifier) {
             Image(photo, contentDescription = null, modifier = Modifier.fillMaxSize())
         } else {
             Text("◇", color = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
+
+@Composable
+private fun ShoppingActionIcon(cart: Boolean = false, expanded: Boolean = false) {
+    val tint = LocalContentColor.current
+    Canvas(Modifier.size(24.dp)) {
+        val scale = size.width / 24f
+        fun segment(x1: Float, y1: Float, x2: Float, y2: Float) {
+            drawLine(tint, Offset(x1 * scale, y1 * scale), Offset(x2 * scale, y2 * scale),
+                strokeWidth = 1.8f * scale, cap = StrokeCap.Round)
+        }
+        if (cart) {
+            segment(2f, 4f, 5f, 4f)
+            segment(5f, 4f, 8f, 16f)
+            segment(8f, 16f, 19f, 16f)
+            segment(6f, 7f, 21f, 7f)
+            segment(21f, 7f, 19f, 13f)
+            segment(19f, 13f, 7.5f, 13f)
+            drawCircle(tint, 1.3f * scale, Offset(9f * scale, 20f * scale))
+            drawCircle(tint, 1.3f * scale, Offset(18f * scale, 20f * scale))
+        } else {
+            val outer = if (expanded) 15f else 9f
+            val middle = if (expanded) 9f else 15f
+            segment(6f, outer, 12f, middle)
+            segment(12f, middle, 18f, outer)
         }
     }
 }

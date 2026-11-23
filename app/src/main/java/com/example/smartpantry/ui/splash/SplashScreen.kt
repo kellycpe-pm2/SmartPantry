@@ -1,4 +1,6 @@
-package com.example.smartpantry
+package com.example.smartpantry.ui.splash
+
+import com.example.smartpantry.R
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background

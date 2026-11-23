@@ -46,7 +46,7 @@ import com.example.smartpantry.viewmodel.AuthViewModel
 import com.example.smartpantry.viewmodel.IngredientUserViewModel
 import com.example.smartpantry.viewmodel.IngredientViewModel
 import com.example.smartpantry.viewmodel.recipe_vm
-import com.example.smartpantry.ShoppingListScreen
+import com.example.smartpantry.Screen.ShoppingUI.ShoppingListScreen
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.status.SessionStatus
 

@@ -1,4 +1,8 @@
-package com.example.smartpantry
+package com.example.smartpantry.ui.home
+
+import com.example.smartpantry.R
+import com.example.smartpantry.Screen.ShoppingUI.ShoppingListScreen
+import com.example.smartpantry.ui.splash.SplashScreen
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -37,7 +41,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.activity.compose.BackHandler
 import androidx.compose.material3.Checkbox
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 
