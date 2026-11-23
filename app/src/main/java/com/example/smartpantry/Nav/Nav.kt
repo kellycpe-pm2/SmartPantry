@@ -274,19 +274,19 @@ fun AppNavHost(
 
 
             composable("recipes") {
-                CommunityScreen(onHome = goHome, onRootChanged = { communityRoot = it }, onPersonalRecipes = { navController.navigate("personal_recipes") }, onShoppingList = { navController.navigate("shopping_list") })
+                CommunityScreen(onBack = goHome, onRootChanged = { communityRoot = it }, onPersonalRecipes = { navController.navigate("personal_recipes") }, onShoppingList = { navController.navigate("shopping_list") })
             }
             composable("community_post/{postId}",
                 arguments = listOf(navArgument("postId") { type = NavType.LongType })
             ) { entry ->
                 CommunityScreen(initialPostId = entry.arguments!!.getLong("postId"),
-                    onHome = goHome,
+                    
                     onPersonalRecipes = { navController.navigate("personal_recipes") },
                     onShoppingList = { navController.navigate("shopping_list") },
                     onBack = { navController.popBackStack() })
             }
             composable("community_create") {
-                CommunityScreen(startCreate = true, onHome = goHome,
+                CommunityScreen(startCreate = true, 
                     onPersonalRecipes = { navController.navigate("personal_recipes") },
                     onShoppingList = { navController.navigate("shopping_list") },
                     onBack = { navController.popBackStack() })
@@ -379,13 +379,13 @@ fun AppNavHost(
             }
 
             composable("favourites") {
-                CommunityScreen(initialSaved = true, onHome = goHome,
+                CommunityScreen(initialSaved = true, 
                     onPersonalRecipes = { navController.navigate("personal_recipes") },
                     onShoppingList = { navController.navigate("shopping_list") },
                     onBack = { navController.popBackStack() })
             }
             composable("shopping_list") {
-                ShoppingListScreen(onBack = { navController.popBackStack() })
+                ShoppingListScreen(onBack = { navController.popBackStack() }, onInventoryChanged = { ingredientUserVm.refreshAfterShoppingTransfer() })
             }
 
             // --- ADD INGREDIENT ---

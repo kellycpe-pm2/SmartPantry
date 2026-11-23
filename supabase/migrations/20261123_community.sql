@@ -102,6 +102,13 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public,pg_temp AS $$
 $$;
 REVOKE ALL ON FUNCTION public.community_card(bigint,uuid) FROM PUBLIC;
 
+CREATE OR REPLACE FUNCTION public.community_clean_text(value text) RETURNS text
+LANGUAGE sql IMMUTABLE SET search_path=public,pg_temp AS $$
+ SELECT btrim(regexp_replace(
+ replace(replace(coalesce(value,''),chr(13)||chr(10),chr(10)),chr(13),chr(10)),
+ chr(10)||'[[:blank:]]*'||chr(10)||'(?:[[:blank:]]*'||chr(10)||')+',
+ chr(10)||chr(10),'g'),chr(9)||chr(10)||chr(13)||' ')
+$$;
 CREATE OR REPLACE FUNCTION public.community_api(p_action text,p_payload jsonb DEFAULT '{}'::jsonb) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
 DECLARE
@@ -138,7 +145,7 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended(uid::text||req::text,0));
   SELECT cr.result INTO result FROM public.community_request cr WHERE cr.user_id=uid AND cr.request_id=req;
   IF FOUND THEN RETURN result; END IF;
-  title:=btrim(p_payload->>'title'); txt:=nullif(btrim(p_payload->>'description'),''); cat:=btrim(p_payload->>'category'); img:=nullif(p_payload->>'image','');
+  title:=btrim(p_payload->>'title'); txt:=nullif(public.community_clean_text(p_payload->>'description'),''); cat:=btrim(p_payload->>'category'); img:=nullif(p_payload->>'image','');
   lines:=p_payload->'ingredients'; steps:=p_payload->'steps';
   IF title IS NULL OR char_length(title) NOT BETWEEN 1 AND 150 OR char_length(coalesce(txt,''))>5000 OR cat IS NULL OR char_length(cat) NOT BETWEEN 1 AND 500 THEN RAISE EXCEPTION 'Check the recipe title, category and description.'; END IF;
   IF jsonb_typeof(lines) IS DISTINCT FROM 'array' OR jsonb_array_length(lines) NOT BETWEEN 1 AND 50 THEN RAISE EXCEPTION 'Add 1 to 50 ingredients.'; END IF;
@@ -165,7 +172,7 @@ BEGIN
   RETURN result;
  END IF;
  IF p_action='publish' THEN
-  rid:=(p_payload->>'recipeId')::bigint; txt:=nullif(btrim(p_payload->>'caption'),'');
+  rid:=(p_payload->>'recipeId')::bigint; txt:=nullif(public.community_clean_text(p_payload->>'caption'),'');
   PERFORM 1 FROM public."Recipe" WHERE "recipeId"=rid AND "userId"=uid FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Save your own recipe before publishing.'; END IF;
   IF char_length(coalesce(txt,''))>500 THEN RAISE EXCEPTION 'Caption must be 500 characters or fewer.'; END IF;
@@ -182,7 +189,7 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'Only the author can change this post.'; END IF;
   IF p_action='unpublish' THEN UPDATE public.recipe_post SET recipe_post_status='unpublished',recipe_post_updated_at=now() WHERE recipe_post_id=pid;
   ELSE
-   txt:=nullif(btrim(p_payload->>'caption'),''); IF char_length(coalesce(txt,''))>500 THEN RAISE EXCEPTION 'Caption is too long.'; END IF;
+   txt:=nullif(public.community_clean_text(p_payload->>'caption'),''); IF char_length(coalesce(txt,''))>500 THEN RAISE EXCEPTION 'Caption is too long.'; END IF;
    UPDATE public.recipe_post SET recipe_post_caption=txt,recipe_post_updated_at=now() WHERE recipe_post_id=pid;
   END IF;
   RETURN jsonb_build_object('ok',true);
@@ -210,7 +217,7 @@ BEGIN
   IF coalesce((p_payload->>'enabled')::boolean,false) THEN INSERT INTO public.recipe_favourite(post_id,user_id) VALUES(pid,uid) ON CONFLICT DO NOTHING;
   ELSE DELETE FROM public.recipe_favourite WHERE post_id=pid AND user_id=uid; END IF;
  ELSIF p_action='comment' THEN
-  txt:=btrim(p_payload->>'text'); cid:=nullif(p_payload->>'commentId','0')::bigint;
+  txt:=public.community_clean_text(p_payload->>'text'); cid:=nullif(p_payload->>'commentId','0')::bigint;
   IF txt IS NULL OR char_length(txt) NOT BETWEEN 1 AND 1000 THEN RAISE EXCEPTION 'Comment must have 1 to 1000 characters.'; END IF;
   IF cid IS NULL THEN
    req:=(p_payload->>'requestId')::uuid; IF req IS NULL THEN RAISE EXCEPTION 'Missing comment request ID.'; END IF;
@@ -246,6 +253,7 @@ BEGIN
     UPDATE public.shopping_list_items SET planned_quantity=greatest(planned_quantity,public.community_convert(q,un,existing_unit)) WHERE id=existing_id AND user_id=uid;
    END IF;
    need:=greatest(q-stock-shopping,0); IF need<=0 THEN CONTINUE; END IF;
+   IF q NOT BETWEEN 1 AND 999 OR q<>trunc(q) OR need>999 OR need<>trunc(need) THEN RAISE EXCEPTION 'This recipe needs a shopping quantity outside 1 to 999 whole units. Add it manually using another unit or split the quantity.'; END IF;
    IF un IN ('pcs','bag','carton') THEN need:=ceil(need); END IF;
    IF existing_id IS NULL THEN
     INSERT INTO public.shopping_list_items(user_id,ingredient_id,planned_quantity,purchase_quantity,unit,is_purchased) VALUES(uid,ing,q,need,un,false);

@@ -1,5 +1,6 @@
 package com.example.smartpantry.community
 
+import com.example.smartpantry.Screen.RecipeUI.CommunityExportMenu
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -50,7 +52,7 @@ import java.util.UUID
 /** Community owns its temporary screens; the app's NavController still owns top-level routes. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CommunityScreen(initialPostId: Long = 0L, onHome: (() -> Unit)? = null, initialSaved: Boolean = false, startCreate: Boolean = false, onRootChanged: (Boolean) -> Unit = {}, onPersonalRecipes: () -> Unit = {}, onShoppingList: () -> Unit, onBack: (() -> Unit)? = null) {
+fun CommunityScreen(initialPostId: Long = 0L, initialSaved: Boolean = false, startCreate: Boolean = false, onRootChanged: (Boolean) -> Unit = {}, onPersonalRecipes: () -> Unit = {}, onShoppingList: () -> Unit, onBack: (() -> Unit)? = null) {
     val vm: CommunityViewModel = viewModel()
     val posts by vm.posts.collectAsState(); val mine by vm.mine.collectAsState()
     val loading by vm.loading.collectAsState(); val busy by vm.busy.collectAsState()
@@ -71,7 +73,7 @@ fun CommunityScreen(initialPostId: Long = 0L, onHome: (() -> Unit)? = null, init
             when(screen) { "reviews" -> screen="detail"; "detail","editor" -> if((initialPostId>0L && screen=="detail") || (startCreate && screen=="editor")) onBack?.invoke() else screen=origin; "mine","saved" -> if(initialSaved) onBack?.invoke() else { screen="feed"; search="" }; else -> onBack?.invoke() }
         }
     }
-    BackHandler(enabled=!root || screen!="feed") { back() }
+    BackHandler { back() }
     LaunchedEffect(Unit) { vm.bindUser(); if(startCreate) vm.feed() }
     LaunchedEffect(screen,search,category) {
         if(root) { delay(if(search.isBlank()) 0 else 250); vm.feed(if(screen=="saved") "saved" else "feed",search,category) }
@@ -82,18 +84,16 @@ fun CommunityScreen(initialPostId: Long = 0L, onHome: (() -> Unit)? = null, init
     val scheme=MaterialTheme.colorScheme
     Box(Modifier.fillMaxSize().background(scheme.background)) {
         Column(Modifier.fillMaxSize()) {
-            CommunityHeader(
+            SmartPantrySectionHeader(
                 title=when(screen) { "detail"->"Recipe details";"reviews"->"Reviews";"editor"->if(vm.draft.value.recipeId>0) "Edit recipe" else "Create recipe";"mine"->"My recipes";"saved"->"Favourites";else->"Community recipes" },
-                showBack=screen!="feed" || onBack!=null, onBack=back,
-                action={ Row {
-                    if(root) IconButton(onClick={ vm.feed(if(screen=="saved") "saved" else "feed",search,category) },enabled=!busy&&!loading) { Icon(Icons.Default.Refresh,"Refresh recipes") }
-                    if(onHome!=null) IconButton(onClick=onHome,enabled=!busy) { Icon(Icons.Default.Home,"Go to Home") }
-                } }
+                showBack=screen!="feed" || initialSaved || initialPostId>0L || startCreate, onBack=back,
+                action=null
             )
-            if(loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if(loading&&!root) LinearProgressIndicator(Modifier.fillMaxWidth())
             Crossfade(targetState=screen,modifier=Modifier.weight(1f),animationSpec=tween(180),label="community-page") { visibleScreen ->
             when(visibleScreen) {
                 "feed","saved","mine" -> {
+                    PullToRefreshBox(isRefreshing=loading,onRefresh={vm.feed(if(screen=="saved") "saved" else "feed",search,category,keepVisible=true)},modifier=Modifier.fillMaxSize()) {
                     LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(18.dp,14.dp,18.dp,26.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
                         item {
                             if(screen!="mine") OutlinedTextField(value=search,onValueChange={ search=it.take(80) },modifier=Modifier.fillMaxWidth(),singleLine=true,
@@ -137,6 +137,7 @@ fun CommunityScreen(initialPostId: Long = 0L, onHome: (() -> Unit)? = null, init
                             if(more) item { OutlinedButton(onClick={vm.feed(if(screen=="saved") "saved" else "feed",search,category,true)},enabled=!loading,modifier=Modifier.fillMaxWidth()) { Text("Load more recipes") } }
                         }
                     }
+                    }
                 }
                 "editor" -> RecipeEditor(vm,Modifier.fillMaxSize(),onSaved={id-> publish(id,vm.draft.value.title)})
                 "detail" -> {
@@ -144,7 +145,7 @@ fun CommunityScreen(initialPostId: Long = 0L, onHome: (() -> Unit)? = null, init
                     if(current!=null) RecipeDetails(current,vm.userId,busy,Modifier.fillMaxSize(),
                         onFavourite={row->vm.action("favourite",postId,buildJsonObject {put("enabled",!row.flag("favourite"))})},
                         onReviews={screen="reviews"},onMissing={dialog="missing"},onShoppingList=onShoppingList,
-                        onCaption={row->dialogId=postId;caption=row.str("caption");editingCaption=true;dialogTitle=row.str("title");dialog="publish"},
+                        onCaption={row->dialogId=postId;caption=cleanInput(row.str("caption"),500);editingCaption=true;dialogTitle=row.str("title");dialog="publish"},
                         onEdit={row->vm.openDraft(row.long("recipeId")) {origin="mine";screen="editor"}},
                         onUnpublish={row->dialogId=postId;dialogTitle=row.str("title");dialog="unpublish"})
                     else if(!loading) EmptyCommunity("Recipe unavailable","Refresh the community feed to check whether this post is still published.",Icons.Default.Info)
@@ -164,7 +165,7 @@ fun CommunityScreen(initialPostId: Long = 0L, onHome: (() -> Unit)? = null, init
     if(error!=null) AlertDialog(onDismissRequest=vm::clearError,icon={Icon(Icons.Default.Info,null)},title={Text("Unable to finish")},text={Text(error.orEmpty())},confirmButton={TextButton(onClick=vm::clearError){Text("OK")}})
     when(dialog) {
         "resume" -> AlertDialog(onDismissRequest={dialog=""},title={Text("Continue your draft?")},text={Text("Your unsaved recipe is still here.")},confirmButton={TextButton(onClick={dialog="";screen="editor"}){Text("Continue draft")}},dismissButton={TextButton(onClick={vm.resetDraft();dialog="";screen="editor"}){Text("Start new")}})
-        "publish" -> AlertDialog(onDismissRequest={if(!busy)dialog=""},title={Text(if(editingCaption) "Edit post" else "Publish recipe?")},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){Text(dialogTitle,fontWeight=FontWeight.Bold);Text(if(editingCaption) "Update the caption shown with your recipe." else "Your saved recipe will be visible to other members.");OutlinedTextField(value=caption,onValueChange={caption=it.take(500)},label={Text("Caption (optional)")},supportingText={Text("${caption.length}/500")},minLines=2)}},
+        "publish" -> AlertDialog(onDismissRequest={if(!busy)dialog=""},title={Text(if(editingCaption) "Edit post" else "Publish recipe?")},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){Text(dialogTitle,fontWeight=FontWeight.Bold);Text(if(editingCaption) "Update the caption shown with your recipe." else "Your saved recipe will be visible to other members.");OutlinedTextField(value=caption,onValueChange={caption=cleanInput(it,500)},label={Text("Caption (optional)")},supportingText={Text("${caption.length}/500")},minLines=2,maxLines=4)}},
             confirmButton={TextButton(enabled=!busy,onClick={if(editingCaption) vm.caption(dialogId,caption){dialog="";vm.loadDetail(postId)} else vm.publish(dialogId,caption){id->dialog="";origin="feed";postId=id;screen="detail"}}){Text(if(editingCaption) "Save" else "Publish")}},dismissButton={TextButton(onClick={dialog=""},enabled=!busy){Text("Not now")}})
         "unpublish" -> AlertDialog(onDismissRequest={if(!busy)dialog=""},title={Text("Remove this post?")},text={Text("Remove “$dialogTitle” from the community? Your personal recipe is kept, and you can publish it again.")},confirmButton={TextButton(onClick={vm.unpublish(dialogId){dialog="";screen="mine";vm.feed()}},enabled=!busy){Text("Remove post")}},dismissButton={TextButton(onClick={dialog=""},enabled=!busy){Text("Cancel")}})
         "missing" -> AlertDialog(onDismissRequest={if(!busy)dialog=""},title={Text("Add missing ingredients?")},text={Text("Add only the shortfall after available pantry stock and ingredients already on your shopping list are counted. Existing compatible entries will be combined.")},confirmButton={TextButton(onClick={vm.action("add_missing",postId,buildJsonObject {put("requestId",requestId)}){requestId=UUID.randomUUID().toString();dialog=""}},enabled=!busy){Text("Add to list")}},dismissButton={TextButton(onClick={dialog=""},enabled=!busy){Text("Cancel")}})
@@ -172,7 +173,7 @@ fun CommunityScreen(initialPostId: Long = 0L, onHome: (() -> Unit)? = null, init
 }
 
 @Composable
-private fun CommunityHeader(title: String,showBack: Boolean,onBack:()->Unit,action:(@Composable ()->Unit)?=null) {
+internal fun SmartPantrySectionHeader(title: String,showBack: Boolean,onBack:()->Unit,action:(@Composable ()->Unit)?=null) {
     val c=MaterialTheme.colorScheme
     Column {
         Row(Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(c.primaryContainer,c.secondaryContainer))).heightIn(min=56.dp).padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically) {
@@ -217,7 +218,7 @@ private fun RecipeFeedCard(row:JsonObject,enabled:Boolean,onOpen:()->Unit,onFavo
             Column(Modifier.padding(13.dp),verticalArrangement=Arrangement.spacedBy(7.dp)) {
                 Text(row.str("title"),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,maxLines=2,overflow=TextOverflow.Ellipsis)
                 Row(verticalAlignment=Alignment.CenterVertically) { Text("by ${row.str("author")}",Modifier.weight(1f),style=MaterialTheme.typography.bodySmall,color=c.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis);RatingSummary(row.number("rating"),row.long("ratingCount")) }
-                if(row.str("caption").isNotBlank()) Text(row.str("caption"),style=MaterialTheme.typography.bodySmall,color=c.onSurfaceVariant,maxLines=2,overflow=TextOverflow.Ellipsis)
+                if(row.str("caption").isNotBlank()) Text(cleanDisplay(row.str("caption")),style=MaterialTheme.typography.bodySmall,color=c.onSurfaceVariant,maxLines=2,overflow=TextOverflow.Ellipsis)
             }
         }
     }
@@ -226,23 +227,18 @@ private fun RecipeFeedCard(row:JsonObject,enabled:Boolean,onOpen:()->Unit,onFavo
 @Composable
 private fun RecipeDetails(data:JsonObject,userId:String,busy:Boolean,modifier:Modifier,onFavourite:(JsonObject)->Unit,onReviews:()->Unit,onMissing:()->Unit,onShoppingList:()->Unit,onCaption:(JsonObject)->Unit,onEdit:(JsonObject)->Unit,onUnpublish:(JsonObject)->Unit) {
     val c=MaterialTheme.colorScheme;val post=data["post"]!!.jsonObject
-    val context=LocalContext.current
+    var export by rememberSaveable { mutableStateOf(false) }
     Column(modifier.verticalScroll(rememberScrollState()).padding(bottom=24.dp)) {
         RecipePhoto(post.str("image"),Modifier.fillMaxWidth().height(215.dp))
         Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
             Row(verticalAlignment=Alignment.Top) {
                 Column(Modifier.weight(1f)) { Text(post.str("title"),style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text("by ${post.str("author")}",style=MaterialTheme.typography.bodyMedium,color=c.onSurfaceVariant,modifier=Modifier.padding(top=4.dp)) }
                 IconButton(onClick={onFavourite(post)},enabled=!busy){Icon(if(post.flag("favourite"))Icons.Default.Bookmark else Icons.Default.BookmarkBorder,"Save recipe",tint=c.primary)}
-                IconButton(onClick={
-                    val ingredients=data.rows("ingredients").joinToString("\n") { "• ${it.str("name")}: ${quantityText(it.number("quantity"))} ${it.str("unit")}" }
-                    val steps=data.words("steps").mapIndexed { index,s->"${index+1}. $s" }.joinToString("\n")
-                    val text="${post.str("title")}\nby ${post.str("author")} · SmartPantry\n\n$ingredients\n\n$steps"
-                    context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply{type="text/plain";putExtra(Intent.EXTRA_TEXT,text)},"Share recipe"))
-                }){Icon(Icons.Default.Share,"Share recipe",tint=c.primary)}
+                IconButton(onClick={export=true}){Icon(Icons.Default.Share,"Share and export",tint=c.primary)}
             }
             Row(Modifier.fillMaxWidth().clickable(onClick=onReviews),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween) { RatingSummary(post.number("rating"),post.long("ratingCount"));Text("${post.long("commentCount")} comments ›",color=c.primary,style=MaterialTheme.typography.labelLarge) }
-            if(post.str("caption").isNotBlank()) Text(post.str("caption"),style=MaterialTheme.typography.bodyMedium)
-            if(post.str("description").isNotBlank()) Text(post.str("description"),style=MaterialTheme.typography.bodyMedium,color=c.onSurfaceVariant)
+            if(post.str("caption").isNotBlank()) ReadableText(post.str("caption"))
+            if(post.str("description").isNotBlank()) ReadableText(post.str("description"))
             HorizontalDivider(color=c.outlineVariant)
             Text("Ingredients",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
             data.rows("ingredients").forEach { row ->
@@ -262,7 +258,7 @@ private fun RecipeDetails(data:JsonObject,userId:String,busy:Boolean,modifier:Mo
             data.words("steps").forEachIndexed { index,step ->
                 Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
                     Box(Modifier.size(30.dp).background(c.primaryContainer,CircleShape),contentAlignment=Alignment.Center){Text("${index+1}",fontWeight=FontWeight.Bold,color=c.primary)}
-                    Text(step,Modifier.weight(1f),style=MaterialTheme.typography.bodyMedium)
+                    Column(Modifier.weight(1f)){ReadableText(step)}
                 }
             }
             OutlinedButton(onClick=onReviews,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(12.dp)){Icon(Icons.Default.ChatBubbleOutline,null);Spacer(Modifier.width(8.dp));Text("View reviews (${post.long("commentCount")})")}
@@ -272,6 +268,7 @@ private fun RecipeDetails(data:JsonObject,userId:String,busy:Boolean,modifier:Mo
             }
         }
     }
+    if(export)CommunityExportMenu(data){export=false}
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -307,7 +304,7 @@ private fun RecipeEditor(vm:CommunityViewModel,modifier:Modifier,onSaved:(Long)-
                 UnitDropdown("Category",draft.category,listOf("Malaysian","Asian","Western","Dessert","Other")){vm.editDraft(draft.copy(category=it))}
             }
         }
-        OutlinedTextField(value=draft.description,onValueChange={vm.editDraft(draft.copy(description=it.take(5000)))},label={Text("Description (optional)")},supportingText={Text("${draft.description.length}/5000")},modifier=Modifier.fillMaxWidth(),minLines=2,shape=RoundedCornerShape(12.dp))
+        OutlinedTextField(value=draft.description,onValueChange={vm.editDraft(draft.copy(description=cleanInput(it,5000)))},label={Text("Description (optional)")},supportingText={Text("${draft.description.length}/5000")},modifier=Modifier.fillMaxWidth(),minLines=2,maxLines=5,shape=RoundedCornerShape(12.dp))
         Row(verticalAlignment=Alignment.CenterVertically){Checkbox(checked=draft.vegan,onCheckedChange={vm.editDraft(draft.copy(vegan=it))});Text("Vegan (no animal ingredients)",style=MaterialTheme.typography.bodyMedium)}
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){Text("Ingredients",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Text("${draft.ingredients.size}/50",style=MaterialTheme.typography.labelMedium,color=c.onSurfaceVariant)}
         draft.ingredients.forEachIndexed {index,row->
@@ -324,7 +321,7 @@ private fun RecipeEditor(vm:CommunityViewModel,modifier:Modifier,onSaved:(Long)-
         draft.steps.forEachIndexed {index,step->
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.Top) {
                 Box(Modifier.padding(top=12.dp).size(28.dp).background(c.primaryContainer,CircleShape),contentAlignment=Alignment.Center){Text("${index+1}",fontWeight=FontWeight.Bold,color=c.primary)}
-                OutlinedTextField(value=step,onValueChange={text->vm.editDraft(draft.copy(steps=draft.steps.mapIndexed{i,s->if(i==index)text.take(500) else s}))},placeholder={Text("Describe this cooking step")},modifier=Modifier.weight(1f),shape=RoundedCornerShape(12.dp),supportingText={Text("${step.length}/500")})
+                OutlinedTextField(value=step,onValueChange={text->vm.editDraft(draft.copy(steps=draft.steps.mapIndexed{i,s->if(i==index)cleanInput(text,500) else s}))},maxLines=5,placeholder={Text("Describe this cooking step")},modifier=Modifier.weight(1f),shape=RoundedCornerShape(12.dp),supportingText={Text("${step.length}/500")})
                 IconButton(onClick={vm.editDraft(draft.copy(steps=if(draft.steps.size==1)listOf("") else draft.steps.filterIndexed{i,_->i!=index}))}){Icon(Icons.Default.DeleteOutline,"Remove step ${index+1}",Modifier.size(20.dp))}
             }
         }
@@ -455,7 +452,7 @@ private fun RecipeReviews(data:JsonObject,vm:CommunityViewModel,modifier:Modifie
                         Column(Modifier.weight(1f)){Text(row.str("author"),fontWeight=FontWeight.Bold);Text(row.str("createdAt").take(10)+(if(row.str("createdAt")!=row.str("updatedAt"))" · edited" else ""),style=MaterialTheme.typography.labelSmall,color=c.onSurfaceVariant)}
                         if(row.str("owner")==vm.userId){IconButton(onClick={commentId=row.long("id");text=row.str("text");editor=true},enabled=!busy){Icon(Icons.Default.Edit,"Edit your comment",Modifier.size(20.dp))};IconButton(onClick={deleteId=row.long("id")},enabled=!busy){Icon(Icons.Default.DeleteOutline,"Delete your comment",Modifier.size(20.dp))}}
                     }
-                    Text(row.str("text"),style=MaterialTheme.typography.bodyMedium)
+                    ReadableText(row.str("text"))
                     TextButton(onClick={vm.action("like",post.long("id"),buildJsonObject{put("commentId",row.long("id"));put("enabled",!row.flag("liked"))})},enabled=!busy,modifier=Modifier.align(Alignment.End)){
                         Icon(if(row.flag("liked"))Icons.Default.ThumbUp else Icons.Default.ThumbUpOffAlt,if(row.flag("liked")) "Unlike comment" else "Like comment",Modifier.size(18.dp));Spacer(Modifier.width(6.dp));Text("${row.long("likes")}")
                     }
@@ -467,9 +464,20 @@ private fun RecipeReviews(data:JsonObject,vm:CommunityViewModel,modifier:Modifie
         Column(Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
             Text(if(commentId==0L) "Write a comment" else "Edit your comment",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
             Text("Ratings and comments are saved separately. You can leave more than one comment.",style=MaterialTheme.typography.bodySmall,color=c.onSurfaceVariant)
-            OutlinedTextField(value=text,onValueChange={text=it.take(1000)},placeholder={Text("Share a cooking tip or your experience…")},supportingText={Text("${text.trim().length}/1000")},modifier=Modifier.fillMaxWidth(),minLines=4,shape=RoundedCornerShape(14.dp))
+            OutlinedTextField(value=text,onValueChange={text=cleanInput(it,1000)},placeholder={Text("Share a cooking tip or your experience…")},supportingText={Text("${text.trim().length}/1000")},modifier=Modifier.fillMaxWidth(),minLines=4,maxLines=6,shape=RoundedCornerShape(14.dp))
             Button(onClick={vm.action("comment",post.long("id"),buildJsonObject{put("commentId",commentId);put("text",text.trim());put("requestId",commentRequest)}){editor=false;text="";commentRequest=UUID.randomUUID().toString()}},enabled=text.trim().isNotEmpty()&&!busy,modifier=Modifier.fillMaxWidth().heightIn(min=50.dp),shape=RoundedCornerShape(12.dp)){Text(if(commentId==0L) "Post comment" else "Save comment")}
         }
     }
     if(deleteId>0) AlertDialog(onDismissRequest={if(!busy)deleteId=0},title={Text("Delete your comment?")},text={Text("The comment and its likes will be removed.")},confirmButton={TextButton(onClick={vm.action("delete_comment",post.long("id"),buildJsonObject{put("commentId",deleteId)}){deleteId=0}},enabled=!busy){Text("Delete")}},dismissButton={TextButton(onClick={deleteId=0},enabled=!busy){Text("Cancel")}})
+}
+
+@Composable
+internal fun ReadableText(value:String) {
+    val text=cleanDisplay(value)
+    var expanded by rememberSaveable(text) { mutableStateOf(false) }
+    Column {
+        if(expanded) Box(Modifier.heightIn(max=240.dp).verticalScroll(rememberScrollState())) { Text(text,style=MaterialTheme.typography.bodyMedium) }
+        else Text(text,style=MaterialTheme.typography.bodyMedium,maxLines=4,overflow=TextOverflow.Ellipsis)
+        if(text.length>220 || text.count{it=='\n'}>=4) TextButton(onClick={expanded=!expanded}) { Text(if(expanded) "Show less" else "Read more") }
+    }
 }

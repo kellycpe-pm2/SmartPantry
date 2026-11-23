@@ -54,10 +54,10 @@ internal class CommunityViewModel(application: Application, private val saved: S
             boundUser = id
         }
     }
-    fun feed(mode: String = activeMode, search: String = activeSearch, category: String = activeCategory, append: Boolean = false) {
+    fun feed(mode: String = activeMode, search: String = activeSearch, category: String = activeCategory, append: Boolean = false, keepVisible: Boolean = false) {
         bindUser(); activeMode = mode; activeSearch = search.trim(); activeCategory = category
         loadJob?.cancel()
-        if (!append) { page = 0; _posts.value = emptyList() }
+        if (!append) { page = 0; if(!keepVisible) _posts.value = emptyList() }
         val targetPage = if (append) page + 1 else 0
         loadJob = viewModelScope.launch {
             _loading.value = true
@@ -97,8 +97,8 @@ internal class CommunityViewModel(application: Application, private val saved: S
     private suspend fun refreshCatalog() { val data = repo.call("catalog"); _catalog.value = data.rows("ingredients"); _mine.value = data.rows("recipes") }
     fun openDraft(id: Long, ready: () -> Unit) = mutate {
         val r = repo.call("draft", buildJsonObject { put("recipeId", id) })
-        editDraft(RecipeDraft(recipeId=id,title=r.str("title"),category=r.str("category","Malaysian"),description=r.str("description"),image=r.str("image"),vegan=r.flag("vegan"),
-            ingredients=r.rows("ingredients").map { DraftIngredient(it.long("id"),it.str("name"),quantityText(it.number("quantity")),normalizedUnit(it.str("unit")),it.str("image")) }, steps=r.words("steps").ifEmpty { listOf("") }))
+        editDraft(RecipeDraft(recipeId=id,title=r.str("title"),category=r.str("category","Malaysian"),description=cleanInput(r.str("description"),5000),image=r.str("image"),vegan=r.flag("vegan"),
+            ingredients=r.rows("ingredients").map { DraftIngredient(it.long("id"),it.str("name"),quantityText(it.number("quantity")),normalizedUnit(it.str("unit")),it.str("image")) }, steps=r.words("steps").map{cleanInput(it,500)}.ifEmpty { listOf("") }))
         ready()
     }
     fun photo(uri: Uri) = mutate {
