@@ -24,24 +24,32 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.example.smartpantry.R
+import com.example.smartpantry.Screen.Admin.AdminScreen
 import com.example.smartpantry.Screen.Auth.CreateAccountScreen
 import com.example.smartpantry.Screen.Auth.LoginScreen
 import com.example.smartpantry.Screen.Auth.ResetPasswordScreen
 import com.example.smartpantry.Screen.IngredientUI.CreateIngredientScreen
+import com.example.smartpantry.Screen.IngredientUI.EditIngredientScreen
+import com.example.smartpantry.Screen.IngredientUI.EditInventoryScreen
+import com.example.smartpantry.Screen.IngredientUI.RecipeScreen
 import com.example.smartpantry.Screen.Profile.AccountSecurityScreen
 import com.example.smartpantry.Screen.Profile.ProfileScreen
 import com.example.smartpantry.viewmodel.ProfileViewModel
-import com.example.smartpantry.Screen.IngredientUI.RecipeScreen
 import com.example.smartpantry.Screen.InventoryUI.AddInventoryFlowScreen
 import com.example.smartpantry.Screen.InventoryUI.InventoryScreen
 import com.example.smartpantry.Screen.RecipeUI.CreateRecipeScreen
+import com.example.smartpantry.Screen.RecipeUI.EditRecipeScreen
+import com.example.smartpantry.Screen.RecipeUI.RecipeDetailScreen
 import com.example.smartpantry.storage.remote.supabase
 import com.example.smartpantry.ui.home.UserDashboardScreen
+import com.example.smartpantry.viewmodel.AdminViewModel
 import com.example.smartpantry.viewmodel.AuthViewModel
 import com.example.smartpantry.viewmodel.IngredientUserViewModel
 import com.example.smartpantry.viewmodel.IngredientViewModel
@@ -86,6 +94,8 @@ fun AppNavHost(
 
     // ViewModels
     val authViewModel: AuthViewModel = viewModel()
+
+    val adminVm: AdminViewModel = viewModel()
 
     val profileViewModel: ProfileViewModel = viewModel()
     val profile by profileViewModel.profile.collectAsState()
@@ -189,21 +199,97 @@ fun AppNavHost(
                 )
             }
 
-            composable("home")    { UserDashboardScreen() }
+            composable("home") {
+                if (profile?.role == "admin") {
+                    LaunchedEffect(Unit) {
+                        navController.navigate("admin") { popUpTo("home") { inclusive = true } }
+                    }
+                } else {
+                    UserDashboardScreen()
+                }
+            }
 
 
             composable("pantry")  {
-                InventoryScreen(onAddInventoryClick = {navController.navigate("add_ingredient")},ingredientUserVm, ingredientVm)
+                InventoryScreen(
+                    onAddInventoryClick = { navController.navigate("add_ingredient") },
+                    onCreateIngredientClick = {navController.navigate("add")},
+                    onEditIngredientClick = { id -> navController.navigate("edit_ingredient/$id") },
+                    vm = ingredientUserVm,
+                    ingredientVm = ingredientVm,
+                    onEditClick = { id -> navController.navigate("edit_inventory/$id") }
+                )
             }
+
+
+            composable("edit_ingredient/{ingredientId}") { entry ->
+                val id = entry.arguments?.getString("ingredientId")?.toLongOrNull() ?: 0L
+                EditIngredientScreen(
+                    ingredientId = id,
+                    onBackClick = { navController.popBackStack() }
+                )
+            }
+
+            composable("edit_inventory/{itemId}") { backStackEntry ->
+                val itemId = backStackEntry.arguments?.getString("itemId")?.toLongOrNull() ?: 0L
+                EditInventoryScreen(
+                    itemId = itemId,
+                    onBackClick = { navController.popBackStack() }
+                )
+            }
+
 
             // --- RECIPES TAB ---
 
 
             composable("recipes") {
-                RecipeScreen(recipeVm,onAddRecipeClick = {navController.navigate("create_recipe")})
+                RecipeScreen(
+                    vm = recipeVm,
+                    onAddRecipeClick = { navController.navigate("create_recipe") },
+                    onRecipeClick = { id -> navController.navigate("recipe_detail/$id") }
+                )
             }
 
+            composable(
+                route = "recipe_detail/{id}",
+                arguments = listOf(navArgument("id") { type = NavType.LongType })
+            ) { entry ->
+                val id = entry.arguments!!.getLong("id")
+                RecipeDetailScreen(
+                    recipeId = id,
+                    onBackClick = { navController.popBackStack() },
+                    onEditClick = { navController.navigate("editRecipe/$id") },
+                    recipeVm = recipeVm
+                )
+            }
+
+            composable(
+                route = "editRecipe/{id}",
+                arguments = listOf(navArgument("id") { type = NavType.LongType })
+            ) { entry ->
+                EditRecipeScreen(
+                    recipeId = entry.arguments!!.getLong("id"),
+                    onBackClick = { navController.popBackStack() }
+                )
+            }
+
+
             composable("records") { UserDashboardScreen() }
+
+            composable("admin") {
+                if (profile?.role == "admin") {
+                    AdminScreen(
+                        vm = adminVm,
+                        onLogout = {
+                            adminVm.reset()
+                            profileViewModel.logout()
+                            navController.navigate("login") { popUpTo(0) { inclusive = true } }
+                        }
+                    )
+                } else {
+                    LaunchedEffect(Unit) { navController.navigate("home") { popUpTo(0) } }
+                }
+            }
 
             composable("profile") {
                 val p = profile
@@ -267,12 +353,12 @@ fun AppNavHost(
 
                 AddInventoryFlowScreen({
 
-                        if (!popped) {
-                            popped = true
-                            if (navController.currentBackStackEntry?.destination?.route == "add_ingredient") {
-                                navController.popBackStack(route = "add_ingredient", inclusive = true)
-                            }
+                    if (!popped) {
+                        popped = true
+                        if (navController.currentBackStackEntry?.destination?.route == "add_ingredient") {
+                            navController.popBackStack(route = "add_ingredient", inclusive = true)
                         }
+                    }
                 },ingredientUserVm)
             }
 
@@ -289,7 +375,7 @@ fun AppNavHost(
                             }
                         }
                     },
-                     recipeVm,ingredientVm
+                    recipeVm,ingredientVm
                 )
             }
         }

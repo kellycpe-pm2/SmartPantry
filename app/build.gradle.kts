@@ -53,6 +53,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.datastore.core.jvm)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.ktx)
     implementation(libs.androidx.room3.common.jvm)
     implementation(libs.androidx.ui)
     testImplementation(libs.junit)
@@ -107,5 +108,8 @@ dependencies {
 
 
     ksp("androidx.room:room-compiler:2.7.0-alpha11")
+
+    //notification
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 
 }

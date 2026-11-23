@@ -5,16 +5,19 @@ import androidx.room.PrimaryKey
 
 @Entity(tableName = "ingredient")
 data class IngredientEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
     val ingredientName: String,
-    val category: String?,
-    val weight: Double?,
-    val unit: String?,
-    val description: String?,
-    val image: String?,
+    val weight: Double? = null,
+    val unit: String? = null,
+    val image: String? = null,
     val localImagePath: String? = null,
-    val minExpiredDuration: Short?,
-    val maxExpiredDuration: Short?,
-    val createAt: Long,
-    val updateAt: Long,
+    val description: String? = null,
+    val category: String? = null,
+    val minExpiredDuration: Short? = null,
+    val maxExpiredDuration: Short? = null,
+    val createAt: Long? = null,
+    val updateAt: Long? = null,
+    val isPublish: Boolean? = null,
+    val userId: String? = null
 )

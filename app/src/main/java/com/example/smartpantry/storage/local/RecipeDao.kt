@@ -4,6 +4,8 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
+import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -12,7 +14,6 @@ interface RecipeDao {
     @Query("SELECT * FROM recipe ORDER BY createAt DESC")
     fun observeAll(): Flow<List<RecipeEntity>>
 
-    // 👇 ADDED: Needed for the background image uploader
     @Query("SELECT * FROM recipe WHERE id = :id")
     suspend fun getById(id: Long): RecipeEntity?
 
@@ -22,6 +23,16 @@ interface RecipeDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(entities: List<RecipeEntity>)
 
+    @Update
+    suspend fun update(entity: RecipeEntity)
+
     @Query("DELETE FROM recipe WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Transaction
+    suspend fun replaceId(oldId: Long, newEntity: RecipeEntity) {
+        deleteById(oldId)
+        insert(newEntity)
+    }
+
 }

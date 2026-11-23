@@ -5,14 +5,17 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.models.IngredientUser
+import com.example.smartpantry.hardware.NotificationHelper
 import com.example.smartpantry.model.Ingredient
 import com.example.smartpantry.storage.local.AppDatabase
 import com.example.smartpantry.storage.local.toEntity
 import com.example.smartpantry.storage.local.toModel
 import com.example.smartpantry.storage.remote.createIngredientUser
+import com.example.smartpantry.storage.remote.deleteIngredientUser
 import com.example.smartpantry.storage.remote.getIngredientUsers
 import com.example.smartpantry.storage.remote.getIngredients
 import com.example.smartpantry.storage.remote.supabase
+import com.example.smartpantry.storage.remote.updateIngredientUser
 import io.github.jan.supabase.postgrest.from
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,6 +44,7 @@ class IngredientUserViewModel(app: Application) : AndroidViewModel(app) {
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     init {
+        // READ (Local reactive stream)
         viewModelScope.launch {
             dao.observeAll().collect { entities ->
                 _inventory.value = entities.map { it.toModel() }
@@ -54,6 +58,9 @@ class IngredientUserViewModel(app: Application) : AndroidViewModel(app) {
         refreshData()
     }
 
+    // ==========================================
+    // READ (Sync from Supabase)
+    // ==========================================
     fun refreshData() {
         viewModelScope.launch {
             _isLoading.value = true
@@ -70,7 +77,22 @@ class IngredientUserViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // --- STAGING ITEMS (Now includes userId) ---
+    fun refreshInventory(force: Boolean = false) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val remote = getIngredientUsers()
+                if (remote.isNotEmpty()) {
+                    dao.insertAll(remote.map { it.toEntity() })
+                }
+            } catch (e: Exception) {
+                Log.e("Inventory", "Refresh failed", e)
+            }
+        }
+    }
+
+    // ==========================================
+    // CREATE (Staging + Save All)
+    // ==========================================
     fun stageItem(
         ingredientId: Long,
         qty: Double,
@@ -94,7 +116,6 @@ class IngredientUserViewModel(app: Application) : AndroidViewModel(app) {
         _stagedItems.update { it - item }
     }
 
-    // --- SAVE ALL STAGED ITEMS ---
     fun saveAllToInventory() {
         val itemsToSave = _stagedItems.value
         if (itemsToSave.isEmpty()) return
@@ -102,7 +123,10 @@ class IngredientUserViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val entities = itemsToSave.map { it.toEntity() }
-                dao.insertAll(entities) // Save to Room
+                dao.insertAll(entities) // Save to Room first
+
+                // Trigger immediate notification check for new items
+                NotificationHelper.triggerImmediateCheck(getApplication())
 
                 // Push to Supabase
                 for (item in itemsToSave) {
@@ -121,8 +145,13 @@ class IngredientUserViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // --- CREATE NEW INGREDIENT ---
-    fun createNewIngredient(name: String, category: String, weight: Double, unit: String, callback: (Ingredient) -> Unit) {
+    fun createNewIngredient(
+        name: String,
+        category: String,
+        weight: Double,
+        unit: String,
+        callback: (Ingredient) -> Unit
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val newIngredient = Ingredient(
@@ -152,19 +181,94 @@ class IngredientUserViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun refreshInventory(force: Boolean = false) {
-        viewModelScope.launch(Dispatchers.IO) {
+    // ==========================================
+    // UPDATE
+    // ==========================================
+    fun updateInventoryItem(id: Long, item: IngredientUser) {
+        viewModelScope.launch {
             try {
-                val remote = getIngredientUsers()
-                if (remote.isNotEmpty()) {
-                    dao.insertAll(remote.map { it.toEntity() })
+                // 1. Update Locally in Room
+                dao.insert(item.toEntity())
+                NotificationHelper.triggerImmediateCheck(getApplication())
+
+                // 2. Update Remotely in Supabase
+                withContext(Dispatchers.IO) {
+                    try {
+                        updateIngredientUser(id, item)
+                    } catch (e: Exception) {
+                        Log.e("Inventory", "Supabase update failed", e)
+                    }
                 }
+
+                // 3. Refresh the list
+                refreshInventory()
             } catch (e: Exception) {
-                Log.e("Inventory", "Refresh failed", e)
+                Log.e("Inventory", "Failed to update item", e)
             }
         }
     }
 
+
+    // ==========================================
+    // USE AN AMOUNT FROM ONE INVENTORY ITEM
+    // ==========================================
+    fun useInventoryAmount(
+        item: IngredientUser,
+        amountToUse: Double,
+        onResult: (message: String, success: Boolean) -> Unit = { _, _ -> }
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val itemId = item.id
+                val currentQuantity = item.quantity ?: 0.0
+
+                if (itemId == null) {
+                    withContext(Dispatchers.Main) {
+                        onResult("This inventory item has no saved ID.", false)
+                    }
+                    return@launch
+                }
+                if (amountToUse <= 0.0 || amountToUse > currentQuantity) {
+                    withContext(Dispatchers.Main) {
+                        onResult("Please enter an amount greater than zero and no more than the available quantity.", false)
+                    }
+                    return@launch
+                }
+
+                val remaining = (currentQuantity - amountToUse).coerceAtLeast(0.0)
+                val updatedItem = item.copy(quantity = remaining)
+
+                // Update Room first. The inventory Flow updates the screen automatically.
+                dao.insert(updatedItem.toEntity())
+                NotificationHelper.triggerImmediateCheck(getApplication())
+
+                // Then update the matching Supabase inventory row.
+                val remoteUpdated = try {
+                    updateIngredientUser(itemId, updatedItem)
+                } catch (e: Exception) {
+                    Log.e("Inventory", "Failed to sync ingredient usage", e)
+                    null
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (remoteUpdated != null) {
+                        onResult("Used $amountToUse ${item.quantityUnit.orEmpty()}. Remaining: $remaining ${item.quantityUnit.orEmpty()}.", true)
+                    } else {
+                        onResult("Quantity updated on this device, but cloud sync failed. Please refresh and check your connection.", false)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("Inventory", "Failed to use inventory amount", e)
+                withContext(Dispatchers.Main) {
+                    onResult("Could not update the ingredient quantity: ${e.message ?: "Unknown error"}", false)
+                }
+            }
+        }
+    }
+
+    // ==========================================
+    // DELETE
+    // ==========================================
     fun deleteInventoryItem(id: Long) {
         viewModelScope.launch {
             try {
@@ -172,15 +276,18 @@ class IngredientUserViewModel(app: Application) : AndroidViewModel(app) {
                 dao.deleteById(id)
 
                 // 2. Delete Remotely from Supabase
-                try {
-                    supabase.from("Ingredient_User").delete {
-                        filter {
-                            eq("IngredientUser_Id", id)
-                        }
+                withContext(Dispatchers.IO) {
+                    try {
+                        deleteIngredientUser(id)
+                    } catch (e: Exception) {
+                        Log.e("Inventory", "Supabase delete failed", e)
                     }
-                } catch (e: Exception) {
                 }
+
+                // 3. Refresh the list
+                refreshInventory()
             } catch (e: Exception) {
+                Log.e("Inventory", "Failed to delete item", e)
             }
         }
     }

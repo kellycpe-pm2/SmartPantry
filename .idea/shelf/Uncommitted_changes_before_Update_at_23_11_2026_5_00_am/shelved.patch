@@ -1,0 +1,286 @@
+Index: app/src/main/java/com/example/smartpantry/viewmodel/IngredientUserViewModel.kt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>package com.example.smartpantry.viewmodel\r\n\r\nimport android.app.Application\r\nimport android.util.Log\r\nimport androidx.lifecycle.AndroidViewModel\r\nimport androidx.lifecycle.viewModelScope\r\nimport com.example.models.IngredientUser\r\nimport com.example.smartpantry.model.Ingredient\r\nimport com.example.smartpantry.storage.local.AppDatabase\r\nimport com.example.smartpantry.storage.local.toEntity\r\nimport com.example.smartpantry.storage.local.toModel\r\nimport com.example.smartpantry.storage.remote.createIngredientUser\r\nimport com.example.smartpantry.storage.remote.deleteIngredientUser\r\nimport com.example.smartpantry.storage.remote.getIngredientUsers\r\nimport com.example.smartpantry.storage.remote.getIngredients\r\nimport com.example.smartpantry.storage.remote.supabase\r\nimport com.example.smartpantry.storage.remote.updateIngredientUser\r\nimport io.github.jan.supabase.postgrest.from\r\nimport kotlinx.coroutines.Dispatchers\r\nimport kotlinx.coroutines.flow.MutableStateFlow\r\nimport kotlinx.coroutines.flow.StateFlow\r\nimport kotlinx.coroutines.flow.asStateFlow\r\nimport kotlinx.coroutines.flow.update\r\nimport kotlinx.coroutines.launch\r\nimport kotlinx.coroutines.withContext\r\nimport kotlin.collections.map\r\n\r\nclass IngredientUserViewModel(app: Application) : AndroidViewModel(app) {\r\n\r\n    private val dao by lazy { AppDatabase.get(app).ingredientUserDao() }\r\n    private val ingredientDao by lazy { AppDatabase.get(app).ingredientDao() }\r\n\r\n    private val _inventory = MutableStateFlow<List<IngredientUser>>(emptyList())\r\n    val inventory: StateFlow<List<IngredientUser>> = _inventory.asStateFlow()\r\n\r\n    private val _allIngredients = MutableStateFlow<List<Ingredient>>(emptyList())\r\n    val allIngredients: StateFlow<List<Ingredient>> = _allIngredients.asStateFlow()\r\n\r\n    private val _stagedItems = MutableStateFlow<List<IngredientUser>>(emptyList())\r\n    val stagedItems: StateFlow<List<IngredientUser>> = _stagedItems.asStateFlow()\r\n\r\n    private val _isLoading = MutableStateFlow(false)\r\n    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()\r\n\r\n    init {\r\n        // READ (Local reactive stream)\r\n        viewModelScope.launch {\r\n            dao.observeAll().collect { entities ->\r\n                _inventory.value = entities.map { it.toModel() }\r\n            }\r\n        }\r\n        viewModelScope.launch {\r\n            ingredientDao.observeAll().collect { entities ->\r\n                _allIngredients.value = entities.map { it.toModel() }\r\n            }\r\n        }\r\n        refreshData()\r\n    }\r\n\r\n    // ==========================================\r\n    // READ (Sync from Supabase)\r\n    // ==========================================\r\n    fun refreshData() {\r\n        viewModelScope.launch {\r\n            _isLoading.value = true\r\n            try {\r\n                val remoteIngredients = getIngredients()\r\n                if (remoteIngredients.isNotEmpty()) {\r\n                    ingredientDao.insertAll(remoteIngredients.map { it.toEntity() })\r\n                }\r\n            } catch (e: Exception) {\r\n                Log.e(\"Inventory\", \"Failed to sync ingredients\", e)\r\n            } finally {\r\n                _isLoading.value = false\r\n            }\r\n        }\r\n    }\r\n\r\n    fun refreshInventory(force: Boolean = false) {\r\n        viewModelScope.launch(Dispatchers.IO) {\r\n            try {\r\n                val remote = getIngredientUsers()\r\n                if (remote.isNotEmpty()) {\r\n                    dao.insertAll(remote.map { it.toEntity() })\r\n                }\r\n            } catch (e: Exception) {\r\n                Log.e(\"Inventory\", \"Refresh failed\", e)\r\n            }\r\n        }\r\n    }\r\n\r\n    // ==========================================\r\n    // CREATE (Staging + Save All)\r\n    // ==========================================\r\n    fun stageItem(\r\n        ingredientId: Long,\r\n        qty: Double,\r\n        unit: String,\r\n        location: String,\r\n        expiredDate: Long,\r\n        userId: String?\r\n    ) {\r\n        val newItem = IngredientUser(\r\n            ingredientId = ingredientId,\r\n            quantity = qty,\r\n            quantityUnit = unit,\r\n            locationStorage = location,\r\n            expiredDate = expiredDate,\r\n            userId = userId\r\n        )\r\n        _stagedItems.update { it + newItem }\r\n    }\r\n\r\n    fun removeStagedItem(item: IngredientUser) {\r\n        _stagedItems.update { it - item }\r\n    }\r\n\r\n    fun saveAllToInventory() {\r\n        val itemsToSave = _stagedItems.value\r\n        if (itemsToSave.isEmpty()) return\r\n\r\n        viewModelScope.launch(Dispatchers.IO) {\r\n            try {\r\n                val entities = itemsToSave.map { it.toEntity() }\r\n                dao.insertAll(entities) // Save to Room first\r\n\r\n                // Push to Supabase\r\n                for (item in itemsToSave) {\r\n                    try {\r\n                        createIngredientUser(item)\r\n                    } catch (e: Exception) {\r\n                        Log.e(\"Inventory\", \"Supabase push failed for item\", e)\r\n                    }\r\n                }\r\n\r\n                // Clear staging area\r\n                _stagedItems.value = emptyList()\r\n            } catch (e: Exception) {\r\n                Log.e(\"Inventory\", \"Failed to save items locally\", e)\r\n            }\r\n        }\r\n    }\r\n\r\n    fun createNewIngredient(\r\n        name: String,\r\n        category: String,\r\n        weight: Double,\r\n        unit: String,\r\n        callback: (Ingredient) -> Unit\r\n    ) {\r\n        viewModelScope.launch(Dispatchers.IO) {\r\n            try {\r\n                val newIngredient = Ingredient(\r\n                    ingredientName = name,\r\n                    category = category,\r\n                    weight = weight,\r\n                    unit = unit,\r\n                    createAt = System.currentTimeMillis(),\r\n                    updateAt = System.currentTimeMillis()\r\n                )\r\n\r\n                val localId = ingredientDao.insert(newIngredient.toEntity())\r\n                val savedIngredient = newIngredient.copy(ingredientId = localId)\r\n\r\n                try {\r\n                    com.example.smartpantry.storage.remote.createIngredient(savedIngredient)\r\n                } catch (e: Exception) {\r\n                    Log.e(\"Inventory\", \"Failed to sync new ingredient to Supabase\", e)\r\n                }\r\n\r\n                withContext(Dispatchers.Main) {\r\n                    callback(savedIngredient)\r\n                }\r\n            } catch (e: Exception) {\r\n                Log.e(\"Inventory\", \"Failed to create ingredient\", e)\r\n            }\r\n        }\r\n    }\r\n\r\n    // ==========================================\r\n    // UPDATE\r\n    // ==========================================\r\n    fun updateInventoryItem(id: Long, item: IngredientUser) {\r\n        viewModelScope.launch {\r\n            try {\r\n                // 1. Update Locally in Room\r\n                dao.insert(item.toEntity())\r\n\r\n                // 2. Update Remotely in Supabase\r\n                withContext(Dispatchers.IO) {\r\n                    try {\r\n                        updateIngredientUser(id, item)\r\n                    } catch (e: Exception) {\r\n                        Log.e(\"Inventory\", \"Supabase update failed\", e)\r\n                    }\r\n                }\r\n\r\n                // 3. Refresh the list\r\n                refreshInventory()\r\n            } catch (e: Exception) {\r\n                Log.e(\"Inventory\", \"Failed to update item\", e)\r\n            }\r\n        }\r\n    }\r\n\r\n    // ==========================================\r\n    // DELETE\r\n    // ==========================================\r\n    fun deleteInventoryItem(id: Long) {\r\n        viewModelScope.launch {\r\n            try {\r\n                // 1. Delete Locally from Room\r\n                dao.deleteById(id)\r\n\r\n                // 2. Delete Remotely from Supabase\r\n                withContext(Dispatchers.IO) {\r\n                    try {\r\n                        deleteIngredientUser(id)\r\n                    } catch (e: Exception) {\r\n                        Log.e(\"Inventory\", \"Supabase delete failed\", e)\r\n                    }\r\n                }\r\n\r\n                // 3. Refresh the list\r\n                refreshInventory()\r\n            } catch (e: Exception) {\r\n                Log.e(\"Inventory\", \"Failed to delete item\", e)\r\n            }\r\n        }\r\n    }\r\n}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/src/main/java/com/example/smartpantry/viewmodel/IngredientUserViewModel.kt b/app/src/main/java/com/example/smartpantry/viewmodel/IngredientUserViewModel.kt
+--- a/app/src/main/java/com/example/smartpantry/viewmodel/IngredientUserViewModel.kt	(revision 3f8f39a90725b8ec47d000db940e4564d10ec9be)
++++ b/app/src/main/java/com/example/smartpantry/viewmodel/IngredientUserViewModel.kt	(date 1795381142000)
+@@ -5,6 +5,7 @@
+ import androidx.lifecycle.AndroidViewModel
+ import androidx.lifecycle.viewModelScope
+ import com.example.models.IngredientUser
++import com.example.smartpantry.hardware.NotificationHelper
+ import com.example.smartpantry.model.Ingredient
+ import com.example.smartpantry.storage.local.AppDatabase
+ import com.example.smartpantry.storage.local.toEntity
+@@ -124,6 +125,9 @@
+                 val entities = itemsToSave.map { it.toEntity() }
+                 dao.insertAll(entities) // Save to Room first
+ 
++                // Trigger immediate notification check for new items
++                NotificationHelper.triggerImmediateCheck(getApplication())
++
+                 // Push to Supabase
+                 for (item in itemsToSave) {
+                     try {
+@@ -185,6 +189,7 @@
+             try {
+                 // 1. Update Locally in Room
+                 dao.insert(item.toEntity())
++                NotificationHelper.triggerImmediateCheck(getApplication())
+ 
+                 // 2. Update Remotely in Supabase
+                 withContext(Dispatchers.IO) {
+Index: app/build.gradle.kts
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>plugins {\r\n    alias(libs.plugins.android.application)\r\n    alias(libs.plugins.kotlin.compose)\r\n    kotlin(\"plugin.serialization\") version \"2.0.21\"\r\n    id(\"com.google.devtools.ksp\")\r\n}\r\n\r\nandroid {\r\n    namespace = \"com.example.smartpantry\"\r\n    compileSdk {\r\n        version = release(37)\r\n    }\r\n\r\n    defaultConfig {\r\n        applicationId = \"com.example.smartpantry\"\r\n        minSdk = 24\r\n        targetSdk = 36\r\n        versionCode = 1\r\n        versionName = \"1.0\"\r\n\r\n        testInstrumentationRunner = \"androidx.test.runner.AndroidJUnitRunner\"\r\n    }\r\n\r\n    buildTypes {\r\n        release {\r\n            optimization {\r\n                enable = false\r\n            }\r\n        }\r\n    }\r\n    compileOptions {\r\n        sourceCompatibility = JavaVersion.VERSION_11\r\n        targetCompatibility = JavaVersion.VERSION_11\r\n    }\r\n    buildFeatures {\r\n        compose = true\r\n    }\r\n}\r\n\r\ndependencies {\r\n    implementation(platform(libs.androidx.compose.bom))\r\n    implementation(libs.androidx.activity.compose)\r\n    implementation(libs.androidx.compose.foundation)\r\n    implementation(libs.androidx.compose.material3)\r\n    implementation(libs.androidx.compose.runtime)\r\n    implementation(libs.androidx.compose.ui)\r\n    implementation(libs.androidx.compose.ui.graphics)\r\n    implementation(libs.androidx.compose.ui.tooling.preview)\r\n    implementation(libs.androidx.core.ktx)\r\n    implementation(libs.androidx.datastore.core.jvm)\r\n    implementation(libs.androidx.lifecycle.runtime.ktx)\r\n    implementation(libs.androidx.lifecycle.viewmodel.ktx)\r\n    implementation(libs.androidx.room3.common.jvm)\r\n    implementation(libs.androidx.ui)\r\n    testImplementation(libs.junit)\r\n    androidTestImplementation(platform(libs.androidx.compose.bom))\r\n    androidTestImplementation(libs.androidx.compose.ui.test.junit4)\r\n    androidTestImplementation(libs.androidx.espresso.core)\r\n    androidTestImplementation(libs.androidx.junit)\r\n    debugImplementation(libs.androidx.compose.ui.test.manifest)\r\n    debugImplementation(libs.androidx.compose.ui.tooling)\r\n\r\n\r\n    // Compose BOM\r\n\r\n         implementation(\"androidx.core:core-ktx:1.13.1\")\r\n        implementation(\"androidx.activity:activity-compose:1.9.0\")\r\n        implementation(platform(\"androidx.compose:compose-bom:2024.06.00\"))\r\n        implementation(\"androidx.compose.ui:ui\")\r\n        implementation(\"androidx.compose.ui:ui-graphics\")\r\n        implementation(\"androidx.compose.ui:ui-tooling-preview\")\r\n        implementation(\"androidx.compose.material3:material3\")\r\n        //Supabase Kotlin client (BOM manages all module versions)\r\n        implementation(platform(\"io.github.jan-tennert.supabase:bom:3.6.0\"))\r\n        implementation(\"io.github.jan-tennert.supabase:postgrest-kt\")\r\n        implementation(\"io.github.jan-tennert.supabase:auth-kt\")\r\n        implementation(\"io.github.jan-tennert.supabase:realtime-kt\")\r\n        implementation(\"io.ktor:ktor-client-android:3.5.2\")\r\n    implementation(\"io.github.jan-tennert.supabase:storage-kt\")\r\n    implementation(\"io.ktor:ktor-client-android:3.0.3\")\r\n// Coroutines\r\n    implementation(\"org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0\")\r\n// Material icons used by the app (Edit / Delete)\r\n    implementation(\"androidx.compose.material:material-icons-extended\")\r\n\r\n    // kotlinx-datetime\r\n    implementation(\"org.jetbrains.kotlinx:kotlinx-datetime:0.5.0\")\r\n\r\n    // kotlinx-serialization\r\n    implementation(\"org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3\")\r\n\r\n    //Navigation\r\n    implementation(\"androidx.navigation:navigation-compose:2.10.2\")\r\n\r\n    //view model\r\n    implementation(\"androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7\")\r\n    implementation(\"androidx.lifecycle:lifecycle-runtime-compose:2.8.7\")\r\n\r\n    implementation(\"io.coil-kt:coil-compose:2.7.0\")\r\n\r\n    //Setup Room for support SQLite\r\n    implementation(\"androidx.room:room-runtime:2.7.0-alpha11\")\r\n    implementation(\"androidx.room:room-ktx:2.7.0-alpha11\")\r\n\r\n\r\n    ksp(\"androidx.room:room-compiler:2.7.0-alpha11\")\r\n\r\n}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+--- a/app/build.gradle.kts	(revision 3f8f39a90725b8ec47d000db940e4564d10ec9be)
++++ b/app/build.gradle.kts	(date 1795379930221)
+@@ -105,4 +105,7 @@
+ 
+     ksp("androidx.room:room-compiler:2.7.0-alpha11")
+ 
++    //notification
++    implementation("androidx.work:work-runtime-ktx:2.9.1")
++
+ }
+\ No newline at end of file
+Index: app/src/main/java/com/example/smartpantry/MainActivity.kt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>package com.example.smartpantry\r\n\r\nimport android.os.Bundle\r\nimport android.util.Log\r\nimport androidx.activity.ComponentActivity\r\nimport androidx.activity.compose.setContent\r\nimport androidx.activity.enableEdgeToEdge\r\nimport androidx.compose.foundation.layout.fillMaxSize\r\nimport androidx.compose.material3.Surface\r\nimport androidx.compose.ui.Modifier\r\nimport com.example.smartpantry.ui.navigation.AppRoot\r\nimport com.example.smartpantry.ui.theme.SmartPantryTheme\r\nimport com.example.smartpantry.uicomponent.AppTheme\r\n\r\nclass MainActivity : ComponentActivity() {\r\n    override fun onCreate(savedInstanceState: Bundle?) {\r\n        super.onCreate(savedInstanceState)\r\n        enableEdgeToEdge()\r\n        setContent {\r\n            Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->\r\n                Log.e(\"SmartPantryCrash\", \"===== CRASH =====\", throwable)\r\n                throwable.printStackTrace()\r\n            }\r\n            SmartPantryTheme {\r\n                AppTheme{\r\n                    Surface(modifier = Modifier.fillMaxSize()) {\r\n                        AppRoot()\r\n                }\r\n                }\r\n            }\r\n        }\r\n    }\r\n}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/src/main/java/com/example/smartpantry/MainActivity.kt b/app/src/main/java/com/example/smartpantry/MainActivity.kt
+--- a/app/src/main/java/com/example/smartpantry/MainActivity.kt	(revision 3f8f39a90725b8ec47d000db940e4564d10ec9be)
++++ b/app/src/main/java/com/example/smartpantry/MainActivity.kt	(date 1795381094806)
+@@ -1,33 +1,71 @@
+ package com.example.smartpantry
+ 
++import android.Manifest
++import android.os.Build
+ import android.os.Bundle
+ import android.util.Log
+ import androidx.activity.ComponentActivity
+ import androidx.activity.compose.setContent
+ import androidx.activity.enableEdgeToEdge
++import androidx.activity.result.contract.ActivityResultContracts
+ import androidx.compose.foundation.layout.fillMaxSize
+ import androidx.compose.material3.Surface
+ import androidx.compose.ui.Modifier
++import androidx.work.ExistingPeriodicWorkPolicy
++import androidx.work.PeriodicWorkRequestBuilder
++import androidx.work.WorkManager
++import com.example.smartpantry.hardware.ExpiryCheckWorker
++import com.example.smartpantry.hardware.NotificationHelper
+ import com.example.smartpantry.ui.navigation.AppRoot
+ import com.example.smartpantry.ui.theme.SmartPantryTheme
+ import com.example.smartpantry.uicomponent.AppTheme
++import java.util.concurrent.TimeUnit
+ 
+ class MainActivity : ComponentActivity() {
++    //notification setup
++    private val requestNotificationPermission =
++        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
++            if (isGranted) {
++                Log.d("SmartPantry", "Notification permission granted")
++            } else {
++                Log.d("SmartPantry", "Notification permission denied")
++            }
++        }
++
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
+         enableEdgeToEdge()
++
++        NotificationHelper.createNotificationChannel(this)
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
++            requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
++        }
++        scheduleExpiryCheckWorker()
++
+         setContent {
+             Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+-                Log.e("SmartPantryCrash", "===== CRASH =====", throwable)
+                 throwable.printStackTrace()
+             }
+             SmartPantryTheme {
+-                AppTheme{
++                AppTheme {
+                     Surface(modifier = Modifier.fillMaxSize()) {
+                         AppRoot()
+-                }
++                    }
+                 }
+             }
+         }
+     }
+-}
+\ No newline at end of file
++
++    private fun scheduleExpiryCheckWorker() {
++        // Run an immediate check on app startup for testing
++        NotificationHelper.triggerImmediateCheck(this)
++
++        val workRequest = PeriodicWorkRequestBuilder<ExpiryCheckWorker>(24, TimeUnit.HOURS)
++            .build()
++        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
++            "ExpiryCheckWork",
++            ExistingPeriodicWorkPolicy.REPLACE,
++            workRequest
++        )
++    }
++}
+Index: app/src/main/java/com/example/smartpantry/storage/local/IngredientUserDao.kt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>package com.example.smartpantry.storage.local\r\n\r\nimport androidx.room.Dao\r\nimport androidx.room.Entity\r\nimport androidx.room.Insert\r\nimport androidx.room.OnConflictStrategy\r\nimport androidx.room.Query\r\nimport kotlinx.coroutines.flow.Flow\r\n\r\n@Dao\r\ninterface IngredientUserDao {\r\n    @Query(\"SELECT * FROM ingredient_user ORDER BY expiredDate ASC\")\r\n    fun observeAll(): Flow<List<IngredientUserEntity>>\r\n\r\n    @Query(\"SELECT * FROM ingredient_user WHERE IngredientUser_Id = :id\")\r\n    suspend fun getById(id: Long): IngredientUserEntity?\r\n\r\n    @Insert(onConflict = OnConflictStrategy.REPLACE)\r\n    suspend fun insert(entity: IngredientUserEntity): Long\r\n\r\n    @Insert(onConflict = OnConflictStrategy.REPLACE)\r\n    suspend fun insertAll(entities: List<IngredientUserEntity>)\r\n\r\n    @Query(\"DELETE FROM ingredient_user WHERE IngredientUser_Id = :id\")\r\n    suspend fun deleteById(id: Long)\r\n\r\n\r\n}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/src/main/java/com/example/smartpantry/storage/local/IngredientUserDao.kt b/app/src/main/java/com/example/smartpantry/storage/local/IngredientUserDao.kt
+--- a/app/src/main/java/com/example/smartpantry/storage/local/IngredientUserDao.kt	(revision 3f8f39a90725b8ec47d000db940e4564d10ec9be)
++++ b/app/src/main/java/com/example/smartpantry/storage/local/IngredientUserDao.kt	(date 1795380186683)
+@@ -12,6 +12,9 @@
+     @Query("SELECT * FROM ingredient_user ORDER BY expiredDate ASC")
+     fun observeAll(): Flow<List<IngredientUserEntity>>
+ 
++    @Query("SELECT * FROM ingredient_user ORDER BY expiredDate ASC")
++    suspend fun getAll(): List<IngredientUserEntity>
++
+     @Query("SELECT * FROM ingredient_user WHERE IngredientUser_Id = :id")
+     suspend fun getById(id: Long): IngredientUserEntity?
+ 
+Index: app/src/main/java/com/example/smartpantry/hardware/notification.kt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/src/main/java/com/example/smartpantry/hardware/notification.kt b/app/src/main/java/com/example/smartpantry/hardware/notification.kt
+new file mode 100644
+--- /dev/null	(date 1795381176207)
++++ b/app/src/main/java/com/example/smartpantry/hardware/notification.kt	(date 1795381176207)
+@@ -0,0 +1,94 @@
++package com.example.smartpantry.hardware
++
++import android.app.NotificationChannel
++import android.app.NotificationManager
++import android.content.Context
++import android.os.Build
++import androidx.core.app.NotificationCompat
++import androidx.work.CoroutineWorker
++import androidx.work.OneTimeWorkRequestBuilder
++import androidx.work.WorkManager
++import androidx.work.WorkerParameters
++import com.example.smartpantry.storage.local.AppDatabase
++
++object NotificationHelper {
++    private const val CHANNEL_ID = "expiry_alerts_channel_v3"
++    private const val CHANNEL_NAME = "Ingredient Expiry Alerts"
++    private const val CHANNEL_DESC = "Notifications for ingredients expiring soon or already expired"
++
++    fun createNotificationChannel(context: Context) {
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++            val channel = NotificationChannel(
++                CHANNEL_ID,
++                CHANNEL_NAME,
++                NotificationManager.IMPORTANCE_HIGH
++            ).apply {
++                description = CHANNEL_DESC
++                enableVibration(true)
++            }
++            val notificationManager =
++                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
++            notificationManager.createNotificationChannel(channel)
++        }
++    }
++
++    fun showNotification(context: Context, id: Int, title: String, message: String) {
++        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
++            .setSmallIcon(android.R.drawable.ic_dialog_info)
++            .setContentTitle(title)
++            .setContentText(message)
++            .setPriority(NotificationCompat.PRIORITY_HIGH)
++            .setDefaults(NotificationCompat.DEFAULT_ALL)
++            .setAutoCancel(true)
++
++        val notificationManager =
++            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
++        notificationManager.notify(id, builder.build())
++    }
++
++    fun triggerImmediateCheck(context: Context) {
++        val workRequest = OneTimeWorkRequestBuilder<ExpiryCheckWorker>().build()
++        WorkManager.getInstance(context).enqueue(workRequest)
++    }
++}
++
++class ExpiryCheckWorker(
++    context: Context,
++    params: WorkerParameters
++) : CoroutineWorker(context, params) {
++
++    override suspend fun doWork(): Result {
++        val db = AppDatabase.get(applicationContext)
++        val inventory = db.ingredientUserDao().getAll()
++        val allIngredients = db.ingredientDao().getAll()
++        val ingredientMap = allIngredients.associateBy { it.id }
++
++        val currentTime = System.currentTimeMillis()
++        val oneDayMs = 24 * 60 * 60 * 1000L
++        val threeDaysMs = 3 * oneDayMs
++
++        inventory.forEach { item ->
++            val timeLeft = item.expiredDate - currentTime
++            val name = ingredientMap[item.ingredientId]?.ingredientName ?: "An ingredient"
++
++            if (timeLeft <= 0) {
++                NotificationHelper.showNotification(
++                    applicationContext,
++                    item.id.toInt(),
++                    "Item Expired!",
++                    "$name has expired."
++                )
++            } else if (timeLeft <= threeDaysMs) {
++                val daysRemaining = (timeLeft / oneDayMs).coerceAtLeast(1)
++                NotificationHelper.showNotification(
++                    applicationContext,
++                    item.id.toInt(),
++                    "Expiring Soon!",
++                    "$name will expire in $daysRemaining day(s)."
++                )
++            }
++        }
++
++        return Result.success()
++    }
++}
+Index: app/src/main/java/com/example/smartpantry/storage/local/IngredientDao.kt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>package com.example.smartpantry.storage.local\r\n\r\nimport androidx.room.Dao\r\nimport androidx.room.Delete\r\nimport androidx.room.Insert\r\nimport androidx.room.OnConflictStrategy\r\nimport androidx.room.Query\r\nimport androidx.room.Transaction\r\nimport kotlinx.coroutines.flow.Flow\r\n\r\n@Dao\r\ninterface IngredientDao {\r\n\r\n    @Query(\"SELECT * FROM ingredient ORDER BY id DESC\")\r\n    fun observeAll(): Flow<List<IngredientEntity>>\r\n\r\n    @Query(\"SELECT * FROM ingredient WHERE id = :id\")\r\n    suspend fun getById(id: Long): IngredientEntity?\r\n\r\n    @Query(\"SELECT * FROM ingredient WHERE ingredientName LIKE '%' || :query || '%'\")\r\n    suspend fun searchByName(query: String): List<IngredientEntity>\r\n\r\n    @Query(\"SELECT * FROM ingredient WHERE category = :category\")\r\n    suspend fun getByCategory(category: String): List<IngredientEntity>\r\n\r\n    @Insert(onConflict = OnConflictStrategy.REPLACE)\r\n    suspend fun insert(entity: IngredientEntity): Long\r\n\r\n    @Insert(onConflict = OnConflictStrategy.REPLACE)\r\n    suspend fun insertAll(entities: List<IngredientEntity>)\r\n\r\n    @Delete\r\n    suspend fun delete(entity: IngredientEntity)\r\n\r\n    @Query(\"DELETE FROM ingredient WHERE id = :id\")\r\n    suspend fun deleteById(id: Long)\r\n\r\n    @Query(\"DELETE FROM ingredient\")\r\n    suspend fun clear()\r\n\r\n    @Transaction\r\n    suspend fun replaceAll(entities: List<IngredientEntity>) {\r\n        clear()\r\n        insertAll(entities)\r\n    }\r\n}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/app/src/main/java/com/example/smartpantry/storage/local/IngredientDao.kt b/app/src/main/java/com/example/smartpantry/storage/local/IngredientDao.kt
+--- a/app/src/main/java/com/example/smartpantry/storage/local/IngredientDao.kt	(revision 3f8f39a90725b8ec47d000db940e4564d10ec9be)
++++ b/app/src/main/java/com/example/smartpantry/storage/local/IngredientDao.kt	(date 1795380197694)
+@@ -14,6 +14,9 @@
+     @Query("SELECT * FROM ingredient ORDER BY id DESC")
+     fun observeAll(): Flow<List<IngredientEntity>>
+ 
++    @Query("SELECT * FROM ingredient ORDER BY id DESC")
++    suspend fun getAll(): List<IngredientEntity>
++
+     @Query("SELECT * FROM ingredient WHERE id = :id")
+     suspend fun getById(id: Long): IngredientEntity?
+ 

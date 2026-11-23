@@ -10,15 +10,10 @@ import com.example.smartpantry.storage.local.AppDatabase
 import com.example.smartpantry.storage.local.saveImageToInternalStorage
 import com.example.smartpantry.storage.local.toEntity
 import com.example.smartpantry.storage.local.toModel
-import com.example.smartpantry.storage.remote.createIngredient
-import com.example.smartpantry.storage.remote.getIngredients
-import com.example.smartpantry.storage.remote.uploadIngredientImage
+import com.example.smartpantry.storage.remote.*
+import io.github.jan.supabase.auth.auth
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
@@ -41,7 +36,6 @@ data class CreateIngredientUiState(
 }
 
 class IngredientViewModel(app: Application) : AndroidViewModel(app) {
-
     private val dao by lazy { AppDatabase.get(app).ingredientDao() }
 
     private val _ingredients = MutableStateFlow<List<Ingredient>>(emptyList())
@@ -55,6 +49,7 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
 
     private var lastSyncTime = 0L
     private val syncIntervalMs = 5 * 60 * 1000L
+    private var publishOnCreate: Boolean = false
 
     init {
         viewModelScope.launch {
@@ -66,18 +61,24 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // --- Form Updaters ---
-    fun onNameChange(v: String)        = _uiState.update { it.copy(ingredientName = v) }
-    fun onCategoryChange(v: String)    = _uiState.update { it.copy(category = v) }
-    fun onQuantityChange(v: String)    = _uiState.update { it.copy(quantityText = v) }
-    fun onUnitChange(v: String)        = _uiState.update { it.copy(unit = v) }
+    fun onNameChange(v: String) = _uiState.update { it.copy(ingredientName = v) }
+    fun onCategoryChange(v: String) = _uiState.update { it.copy(category = v) }
+    fun onQuantityChange(v: String) = _uiState.update { it.copy(quantityText = v) }
+    fun onUnitChange(v: String) = _uiState.update { it.copy(unit = v) }
     fun onDescriptionChange(v: String) = _uiState.update { it.copy(description = v) }
-    fun onMinExpiryChange(v: String)   = _uiState.update { it.copy(minExpiryDays = v) }
-    fun onMaxExpiryChange(v: String)   = _uiState.update { it.copy(maxExpiryDays = v) }
-    fun onImagePicked(path: String?)   = _uiState.update { it.copy(imagePath = path) }
-    fun clearError()                   = _uiState.update { it.copy(error = null) }
-    fun consumeSaved()                 = _uiState.update { it.copy(saved = false) }
+    fun onMinExpiryChange(v: String) = _uiState.update { it.copy(minExpiryDays = v) }
+    fun onMaxExpiryChange(v: String) = _uiState.update { it.copy(maxExpiryDays = v) }
+    fun onImagePicked(path: String?) = _uiState.update { it.copy(imagePath = path) }
+    fun clearError() = _uiState.update { it.copy(error = null) }
+    fun consumeSaved() = _uiState.update { it.copy(saved = false) }
+    fun setPublishOnCreate(publish: Boolean) { publishOnCreate = publish }
 
-    // --- 1. SAVE LOCALLY (Works 100% Offline) ---
+    private fun currentUserId(): String? =
+        try { supabase.auth.currentUserOrNull()?.id } catch (_: Exception) { null }
+
+    // ==========================================
+    // CREATE
+    // ==========================================
     fun create() {
         val s = _uiState.value
         if (s.ingredientName.isBlank() || s.isSaving) return
@@ -86,20 +87,20 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
 
         viewModelScope.launch {
             try {
-                // Save image permanently (downscaled)
+                // 1. Persist image locally (if picked)
                 val persistedPath = s.imagePath?.let { path ->
                     withContext(Dispatchers.IO) {
                         try {
                             if (path.startsWith("/data")) path
                             else saveImageToInternalStorage(getApplication(), Uri.parse(path))
                         } catch (e: Exception) {
+                            Log.e("IngredientSync", "Image save failed", e)
                             null
                         }
                     }
-
                 }
 
-                // Build the model (Remote URL is null for now)
+                // 2. Build model
                 val ingredient = Ingredient(
                     ingredientName = s.ingredientName.trim(),
                     category = s.category.takeIf { it.isNotEmpty() },
@@ -111,13 +112,16 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
                     minExpiredDuration = s.minExpiryDays.toShortOrNull(),
                     maxExpiredDuration = s.maxExpiryDays.toShortOrNull(),
                     createAt = System.currentTimeMillis(),
-                    updateAt = System.currentTimeMillis()
+                    updateAt = System.currentTimeMillis(),
+                    isPublish = publishOnCreate,
+                    userId = currentUserId()
                 )
 
-                // Save to Room
+                // 3. Save to Room
                 val localId = dao.insert(ingredient.toEntity())
+                Log.d("IngredientSync", "Saved locally: id=$localId, publish=$publishOnCreate, image=$persistedPath")
 
-                // Reset UI immediately (User sees success instantly)
+                // 4. Reset form
                 _uiState.update { it.copy(isSaving = false, saved = true) }
                 yield()
                 _uiState.update {
@@ -128,63 +132,86 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
 
-                // Upload to Supabase in the background
-                uploadIngredientToSupabase(localId)
+                // 5. Upload image ALWAYS (even for drafts) — only data is publish-gated
+                uploadImageOnly(localId)
 
-            } catch (local: Exception) {
-                Log.e("IngredientSync", "Local save failed", local)
-                _uiState.update {
-                    it.copy(isSaving = false, error = "Failed to save: ${local.message}")
+                // 6. If publish, push full data to Supabase
+                if (publishOnCreate) {
+                    publishIngredientToSupabase(localId)
                 }
+            } catch (e: Exception) {
+                Log.e("IngredientSync", "Save failed", e)
+                _uiState.update { it.copy(isSaving = false, error = "Failed: ${e.message}") }
             }
         }
     }
 
-    // --- 2. BACKGROUND UPLOAD (Runs silently) ---
-    private fun uploadIngredientToSupabase(localId: Long) {
+    // ==========================================
+    // UPLOAD IMAGE ONLY (runs for both draft & published)
+    // ==========================================
+    private fun uploadImageOnly(localId: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val entity = dao.getById(localId) ?: return@launch
-                val localPath = entity.localImagePath
-                var remoteUrl = entity.image
+                val localPath = entity.localImagePath ?: return@launch
+                if (entity.image != null) return@launch  // already uploaded
 
-                // Upload image if it exists locally and we don't have a remote URL yet
-                if (remoteUrl == null && localPath != null) {
-                    val file = File(localPath)
-                    if (file.exists()) {
-                        remoteUrl = uploadIngredientImage(Uri.fromFile(file), getApplication())
-                    }
+                val file = File(localPath)
+                if (!file.exists()) {
+                    Log.e("IngredientSync", "Local image file missing: $localPath")
+                    return@launch
                 }
 
-                // Update Room with the new remote URL
-                val updatedModel = entity.toModel().copy(image = remoteUrl)
-                dao.insert(updatedModel.toEntity())
+                Log.d("IngredientSync", "Uploading image: ${file.length()} bytes")
+                val remoteUrl = uploadIngredientImage(Uri.fromFile(file), getApplication())
+                Log.d("IngredientSync", "Image uploaded: $remoteUrl")
 
-                // Push the full ingredient to Supabase Database
-                createIngredient(updatedModel)
-
+                if (remoteUrl != null) {
+                    val updated = entity.toModel().copy(image = remoteUrl)
+                    dao.insert(updated.toEntity())
+                }
             } catch (e: Exception) {
-                Log.e("IngredientSync", "Background upload failed (probably offline)", e)
+                Log.e("IngredientSync", "Image upload failed", e)
             }
         }
     }
 
-    // --- 3. AUTO SYNC MISSING IMAGES ---
+    // ==========================================
+    // PUBLISH FULL INGREDIENT (data to Supabase)
+    // ==========================================
+    private fun publishIngredientToSupabase(localId: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val entity = dao.getById(localId) ?: return@launch
+                val model = entity.toModel().copy(isPublish = true)
+                dao.insert(model.toEntity())
+                createIngredient(model)
+                Log.d("IngredientSync", "Published to Supabase: id=$localId")
+            } catch (e: Exception) {
+                Log.e("IngredientSync", "Publish failed", e)
+            }
+        }
+    }
+
+    // ==========================================
+    // SYNC PENDING IMAGES (retry on startup)
+    // ==========================================
     fun syncPendingImages() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val allIngredients = dao.observeAll().first()
-                val pending = allIngredients.filter { it.localImagePath != null && it.image == null }
-                for (entity in pending) {
-                    uploadIngredientToSupabase(entity.id)
-                }
+                val all = dao.observeAll().first()
+                // Retry any ingredient that has a local image but no remote URL
+                all.filter { it.localImagePath != null && it.image == null }
+                    .forEach { uploadImageOnly(it.id) }
             } catch (e: Exception) {
                 Log.e("IngredientSync", "Pending sync failed", e)
             }
         }
     }
 
-    // --- 4. REFRESH FROM SUPABASE ---
+    // ==========================================
+    // REFRESH
+    // ==========================================
     fun refreshIngredients(force: Boolean = false) {
         val now = System.currentTimeMillis()
         if (!force && (now - lastSyncTime) < syncIntervalMs) return
@@ -202,6 +229,64 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
                 Log.e("IngredientSync", "Refresh failed", e)
             } finally {
                 _isRefreshing.value = false
+            }
+        }
+    }
+
+    // ==========================================
+    // UPDATE
+    // ==========================================
+    fun updateIngredient(id: Long, updated: Ingredient) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                dao.insert(updated.copy(ingredientId = id).toEntity())
+                com.example.smartpantry.storage.remote.updateIngredient(id, updated)
+                refreshIngredients(force = true)
+            } catch (e: Exception) {
+                Log.e("IngredientSync", "Update failed", e)
+            }
+        }
+    }
+
+    // ==========================================
+    // DELETE
+    // ==========================================
+    fun deleteIngredient(id: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                dao.deleteById(id)
+                com.example.smartpantry.storage.remote.deleteIngredient(id)
+                refreshIngredients(force = true)
+            } catch (e: Exception) {
+                Log.e("IngredientSync", "Delete failed", e)
+            }
+        }
+    }
+
+    // ==========================================
+    // TOGGLE PUBLISH (Draft <-> Published)
+    // ==========================================
+    fun togglePublish(id: Long, ing: Ingredient) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val newState = !(ing.isPublish ?: false)
+            val updated = ing.copy(isPublish = newState, updateAt = System.currentTimeMillis())
+            dao.insert(updated.copy(ingredientId = id).toEntity())
+
+            if (newState) {
+                // Publishing: upload image if not yet, then push data
+                uploadImageOnly(id)
+                try {
+                    createIngredient(updated.copy(ingredientId = id))
+                } catch (e: Exception) {
+                    Log.e("IngredientSync", "Publish failed", e)
+                }
+            } else {
+                // Unpublishing: delete from Supabase
+                try {
+                    com.example.smartpantry.storage.remote.deleteIngredient(id)
+                } catch (e: Exception) {
+                    Log.e("IngredientSync", "Unpublish failed", e)
+                }
             }
         }
     }
