@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Database(
     entities = [
@@ -12,7 +14,7 @@ import androidx.room.RoomDatabase
         RecipeEntity::class,
         RecipeIngredientEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -23,6 +25,7 @@ abstract class AppDatabase : RoomDatabase() {
 
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null
+
         fun get(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -34,5 +37,10 @@ abstract class AppDatabase : RoomDatabase() {
                     .build()
                     .also { INSTANCE = it }
             }
+
+        /** Call on sign-out or whenever a different user signs in on this device. */
+        suspend fun clearUserCache(context: Context) = withContext(Dispatchers.IO) {
+            get(context).clearAllTables()
+        }
     }
 }

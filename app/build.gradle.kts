@@ -50,6 +50,7 @@ dependencies {
     implementation(libs.androidx.datastore.core.jvm)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
+    implementation(libs.androidx.material3)
     implementation(libs.androidx.room3.common.jvm)
     implementation(libs.androidx.ui)
     testImplementation(libs.junit)

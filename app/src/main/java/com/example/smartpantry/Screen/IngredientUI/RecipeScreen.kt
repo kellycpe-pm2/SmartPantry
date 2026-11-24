@@ -1,370 +1,338 @@
-package com.example.smartpantry.Screen.IngredientUI
+package com.example.smartpantry.Screen.RecipeUI
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Restaurant
-import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.smartpantry.community.RecipePhoto
+import com.example.smartpantry.community.SmartPantrySectionHeader
 import com.example.smartpantry.model.Recipe
-import com.example.smartpantry.viewmodel.RecommendedRecipeResult
 import com.example.smartpantry.viewmodel.recipe_vm
+import kotlinx.coroutines.launch
 import java.io.File
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RecipeScreen(
-    vm: recipe_vm,
-    onAddRecipeClick: () -> Unit,
-    onRecipeClick: (Long) -> Unit
+    onCreateClick: () -> Unit,
+    onRecipeClick: (Long) -> Unit,
+    onEditClick: (Long) -> Unit,
+    recipeVm: recipe_vm = viewModel(),
+    onBackClick: () -> Unit
 ) {
-    val items by vm.recipes.collectAsState()
-    val recommendedItems by vm.recommendedRecipes.collectAsState()
+    val recipes by recipeVm.recipes.collectAsState()
+    val isSyncing by recipeVm.isSyncing.collectAsState()
     val scheme = MaterialTheme.colorScheme
-    var selectedTab by remember { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
 
-    LaunchedEffect(selectedTab) {
-        if (selectedTab == 1) {
-            vm.loadRecommendedRecipes()
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf("All") }
+    var publishingId by remember { mutableStateOf<Long?>(null) }
+    var publishConfirmRecipe by remember { mutableStateOf<Recipe?>(null) }
+    var deleteConfirmRecipe by remember { mutableStateOf<Recipe?>(null) }
+    var bannerMessage by remember { mutableStateOf<String?>(null) }
+    var bannerIsError by remember { mutableStateOf(false) }
+
+    val categories = remember(recipes) {
+        listOf("All") + recipes.mapNotNull { it.recipeCategory?.takeIf(String::isNotBlank) }.distinct()
+    }
+
+    val filteredRecipes = remember(recipes, searchQuery, selectedCategory) {
+        recipes.filter { r ->
+            val matchesSearch = searchQuery.isBlank() ||
+                    r.recipeName.contains(searchQuery, ignoreCase = true) ||
+                    (r.description ?: "").contains(searchQuery, ignoreCase = true)
+            val matchesCat = selectedCategory == "All" ||
+                    r.recipeCategory.equals(selectedCategory, ignoreCase = true)
+            matchesSearch && matchesCat
         }
     }
 
     Scaffold(
-        containerColor = scheme.background,
         topBar = {
-            Column {
-                TopAppBar(
-                    title = {
-                        Text("Recipes", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = scheme.primary)
-                    },
-                    actions = {
-                        IconButton(onClick = {
-                            vm.refreshRecipes(force = true)
-                            if (selectedTab == 1) vm.loadRecommendedRecipes()
-                        }) {
-                            Icon(Icons.Default.Refresh, "Refresh", tint = scheme.primary)
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = scheme.background,
-                        titleContentColor = scheme.primary,
-                        actionIconContentColor = scheme.primary
-                    )
-                )
-
-                TabRow(
-                    selectedTabIndex = selectedTab,
-                    containerColor = scheme.background,
-                    contentColor = scheme.primary
-                ) {
-                    Tab(
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
-                        text = { Text("All Recipes") }
-                    )
-                    Tab(
-                        selected = selectedTab == 1,
-                        onClick = {
-                            selectedTab = 1
-                            vm.loadRecommendedRecipes()
-                        },
-                        text = { Text("Recommended") }
-                    )
+            SmartPantrySectionHeader(
+                title = "My recipes",
+                showBack = false,
+                onBack = onBackClick,
+                action = {
+                    IconButton(onClick = { recipeVm.refreshRecipes() }, enabled = !isSyncing) {
+                        Icon(Icons.Default.Refresh, "Sync recipes", tint = scheme.primary)
+                    }
                 }
-            }
+            )
         },
         floatingActionButton = {
             FloatingActionButton(
-                onClick = onAddRecipeClick,
+                onClick = onCreateClick,
                 containerColor = scheme.primary,
-                contentColor = scheme.onPrimary
+                contentColor = scheme.onPrimary,
+                shape = RoundedCornerShape(16.dp)
             ) {
-                Text("+", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Icon(Icons.Default.Add, "Create recipe")
             }
         }
-    ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (selectedTab == 0) {
-                if (items.isEmpty()) {
-                    EmptyRecipesView(scheme)
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        contentPadding = PaddingValues(vertical = 12.dp)
-                    ) {
-                        items(items, key = { it.recipeId ?: 0L }) { item ->
-                            RecipeRow(
-                                item = item,
-                                onClick = { item.recipeId?.let(onRecipeClick) },
-                                onDelete = { item.recipeId?.let(vm::deleteRecipe) }
-                            )
-                        }
-                    }
-                }
-            } else {
-                if (recommendedItems.isEmpty()) {
-                    Column(
-                        modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Icon(
-                            Icons.Default.Star,
-                            contentDescription = null,
-                            modifier = Modifier.size(64.dp),
-                            tint = scheme.primary.copy(alpha = 0.5f)
-                        )
-                        Spacer(Modifier.height(16.dp))
-                        Text("No recommendations available", fontWeight = FontWeight.Bold, color = scheme.onBackground)
-                        Spacer(Modifier.height(4.dp))
-                        Text("Add ingredients with expiry dates and recipes first", fontSize = 12.sp, color = scheme.onSurfaceVariant)
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        contentPadding = PaddingValues(vertical = 12.dp)
-                    ) {
-                        items(recommendedItems, key = { it.recipe.recipeId ?: 0L }) { rec ->
-                            RecommendedRecipeRow(
-                                item = rec,
-                                onClick = { rec.recipe.recipeId?.let(onRecipeClick) }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyRecipesView(scheme: ColorScheme) {
-    Box(modifier = Modifier.fillMaxSize()) {
+    ) { innerPadding ->
         Column(
-            modifier = Modifier.align(Alignment.Center).padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            Modifier
+                .fillMaxSize()
+                .background(scheme.background)
+                .padding(innerPadding)
         ) {
-            Icon(
-                Icons.Default.Restaurant,
-                contentDescription = null,
-                modifier = Modifier.size(64.dp),
-                tint = scheme.primary.copy(alpha = 0.5f)
-            )
-            Spacer(Modifier.height(16.dp))
-            Text("No recipes yet", fontWeight = FontWeight.Bold, color = scheme.onBackground)
-            Spacer(Modifier.height(4.dp))
-            Text("Tap + to create your first recipe", fontSize = 12.sp, color = scheme.onSurfaceVariant)
-        }
-    }
-}
+            if (isSyncing) LinearProgressIndicator(Modifier.fillMaxWidth())
 
-@Composable
-private fun RecommendedRecipeRow(
-    item: RecommendedRecipeResult,
-    onClick: () -> Unit
-) {
-    val scheme = MaterialTheme.colorScheme
-    val recipe = item.recipe
-
-    val localFile: String? = recipe.localRecipeImage
-    val remoteUrl: String? = recipe.recipeImage
-    val imageToLoad = if (!localFile.isNullOrEmpty() && File(localFile).exists()) {
-        File(localFile)
-    } else {
-        remoteUrl
-    }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(scheme.surfaceVariant)
-            .clickable(onClick = onClick)
-            .padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(64.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(scheme.primaryContainer),
-            contentAlignment = Alignment.Center
-        ) {
-            if (imageToLoad != null) {
-                AsyncImage(
-                    model = imageToLoad,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                Icon(Icons.Default.Restaurant, contentDescription = null, tint = scheme.primary)
-            }
-        }
-
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                recipe.recipeName,
-                fontWeight = FontWeight.SemiBold,
-                color = scheme.onBackground
-            )
-            Spacer(Modifier.height(4.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    color = if (item.displayPercentage > 50) scheme.primaryContainer else scheme.secondaryContainer,
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(
-                        text = "Expiry Priority: ${item.displayPercentage}%",
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (item.displayPercentage > 50) scheme.onPrimaryContainer else scheme.onSecondaryContainer
-                    )
-                }
-
-                Surface(
-                    color = if (item.missingIngredients.isEmpty()) scheme.tertiaryContainer else scheme.errorContainer,
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(
-                        text = if (item.missingIngredients.isEmpty()) "Ready to cook!" else "Missing ${item.missingIngredients.size}",
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (item.missingIngredients.isEmpty()) scheme.onTertiaryContainer else scheme.onErrorContainer
-                    )
-                }
-            }
-
-            if (item.missingIngredients.isNotEmpty()) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "Need to buy: ${item.missingIngredients.joinToString(", ")}",
-                    fontSize = 12.sp,
-                    color = scheme.error,
-                    fontWeight = FontWeight.SemiBold
-                )
-            } else {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "✓ You have all ingredients in pantry!",
-                    fontSize = 12.sp,
-                    color = scheme.primary,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun RecipeRow(
-    item: Recipe,
-    onClick: () -> Unit,
-    onDelete: () -> Unit
-) {
-    val scheme = MaterialTheme.colorScheme
-
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = {
-            if (it == SwipeToDismissBoxValue.EndToStart) {
-                onDelete()
-                true
-            } else false
-        }
-    )
-
-    val localFile: String? = item.localRecipeImage
-    val remoteUrl: String? = item.recipeImage
-    val imageToLoad = if (!localFile.isNullOrEmpty() && File(localFile).exists()) {
-        File(localFile)
-    } else {
-        remoteUrl
-    }
-
-    SwipeToDismissBox(
-        state = dismissState,
-        enableDismissFromStartToEnd = false,
-        backgroundContent = {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(scheme.errorContainer)
-                    .padding(horizontal = 20.dp),
-                contentAlignment = Alignment.CenterEnd
+            LazyColumn(
+                contentPadding = PaddingValues(18.dp, 10.dp, 18.dp, 88.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Icon(Icons.Default.Delete, "Delete", tint = scheme.onErrorContainer)
-            }
-        }
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(scheme.surfaceVariant)
-                .clickable(onClick = onClick)
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(64.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(scheme.primaryContainer),
-                contentAlignment = Alignment.Center
-            ) {
-                if (imageToLoad != null) {
-                    AsyncImage(
-                        model = imageToLoad,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Icon(Icons.Default.Restaurant, contentDescription = null, tint = scheme.primary)
-                }
-            }
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    item.recipeName,
-                    fontWeight = FontWeight.SemiBold,
-                    color = scheme.onBackground
-                )
-                val subtitle = buildString {
-                    if (!item.recipeCategory.isNullOrBlank()) append(item.recipeCategory)
-                    if (item.isVegan) {
-                        if (isNotEmpty()) append(" • ")
-                        append("Vegan 🌱")
+                bannerMessage?.let { msg ->
+                    item {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (bannerIsError) scheme.errorContainer else scheme.primaryContainer
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    msg,
+                                    Modifier.weight(1f),
+                                    color = if (bannerIsError) scheme.onErrorContainer else scheme.onPrimaryContainer,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                IconButton(onClick = { bannerMessage = null }, modifier = Modifier.size(24.dp)) {
+                                    Icon(Icons.Default.Close, "Dismiss", Modifier.size(16.dp))
+                                }
+                            }
+                        }
                     }
                 }
-                if (subtitle.isNotEmpty()) {
-                    Spacer(Modifier.height(2.dp))
-                    Text(subtitle, fontSize = 12.sp, color = scheme.onSurfaceVariant)
+
+                item {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it.take(80) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        placeholder = { Text("Search my recipes") },
+                        leadingIcon = { Icon(Icons.Default.Search, null) },
+                        trailingIcon = if (searchQuery.isNotBlank()) ({
+                            IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, "Clear") }
+                        }) else null,
+                        shape = RoundedCornerShape(16.dp)
+                    )
+                }
+
+                if (categories.size > 1) {
+                    item {
+                        Row(
+                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            categories.forEach { cat ->
+                                FilterChip(
+                                    selected = selectedCategory == cat,
+                                    onClick = { selectedCategory = cat },
+                                    label = { Text(cat) }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (filteredRecipes.isEmpty()) {
+                    item {
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = scheme.surfaceVariant,
+                            border = BorderStroke(1.dp, scheme.outlineVariant),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                Modifier.padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(Icons.Default.MenuBook, null, tint = scheme.primary, modifier = Modifier.size(36.dp))
+                                Text("No personal recipes yet", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    "Tap + to create a recipe, then publish it to Community anytime.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = scheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    items(filteredRecipes, key = { it.recipeId ?: 0L }) { recipe ->
+                        val rId = recipe.recipeId ?: 0L
+                        val isPublishing = publishingId == rId
+                        val imgUrl = recipe.localRecipeImage?.takeIf { File(it).exists() }
+                            ?: recipe.recipeImage.orEmpty()
+
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = scheme.surface,
+                            border = BorderStroke(1.dp, scheme.outlineVariant),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { if (rId > 0) onRecipeClick(rId) }
+                        ) {
+                            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RecipePhoto(
+                                        url = imgUrl,
+                                        modifier = Modifier.size(72.dp).clip(RoundedCornerShape(14.dp))
+                                    )
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(
+                                            recipe.recipeName,
+                                            fontWeight = FontWeight.Bold,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            recipe.recipeCategory?.takeIf { it.isNotBlank() }?.let {
+                                                Surface(
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = scheme.primaryContainer
+                                                ) {
+                                                    Text(
+                                                        it,
+                                                        Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = scheme.onPrimaryContainer
+                                                    )
+                                                }
+                                            }
+                                            if (recipe.isVegan) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = Color(0xFFE4F4EA)
+                                                ) {
+                                                    Text(
+                                                        "🌱 Vegan",
+                                                        Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = Color(0xFF216B43)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Text(
+                                            "${recipe.cookingSteps.size} step(s)",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = scheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+
+                                HorizontalDivider(color = scheme.outlineVariant)
+
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    FilledTonalButton(
+                                        onClick = { publishConfirmRecipe = recipe },
+                                        enabled = !isPublishing && rId > 0,
+                                        shape = RoundedCornerShape(12.dp),
+                                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                                    ) {
+                                        if (isPublishing) {
+                                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                        } else {
+                                            Icon(Icons.Default.Public, null, Modifier.size(18.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Publish to Community", style = MaterialTheme.typography.labelMedium)
+                                        }
+                                    }
+
+                                    Row {
+                                        IconButton(onClick = { if (rId > 0) onEditClick(rId) }) {
+                                            Icon(Icons.Default.Edit, "Edit recipe", tint = scheme.primary)
+                                        }
+                                        IconButton(onClick = { deleteConfirmRecipe = recipe }) {
+                                            Icon(Icons.Default.DeleteOutline, "Delete recipe", tint = scheme.error)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
+
+    publishConfirmRecipe?.let { target ->
+        AlertDialog(
+            onDismissRequest = { publishConfirmRecipe = null },
+            icon = { Icon(Icons.Default.Public, null) },
+            title = { Text("Publish to Community?") },
+            text = {
+                Text("Share \"${target.recipeName}\" with the SmartPantry community so other users can view and cook it.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val rId = target.recipeId ?: return@TextButton
+                    publishConfirmRecipe = null
+                    publishingId = rId
+                    scope.launch {
+                        val res = recipeVm.publishPersonalRecipe(rId)
+                        publishingId = null
+                        res.onSuccess {
+                            bannerMessage = it
+                            bannerIsError = false
+                        }.onFailure {
+                            bannerMessage = it.message ?: "Failed to publish recipe."
+                            bannerIsError = true
+                        }
+                    }
+                }) { Text("Publish") }
+            },
+            dismissButton = {
+                TextButton(onClick = { publishConfirmRecipe = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    deleteConfirmRecipe?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteConfirmRecipe = null },
+            title = { Text("Delete recipe?") },
+            text = { Text("Delete \"${target.recipeName}\" permanently from your personal recipes?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    target.recipeId?.let { recipeVm.deleteRecipeById(it) }
+                    deleteConfirmRecipe = null
+                }) { Text("Delete", color = scheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteConfirmRecipe = null }) { Text("Cancel") }
+            }
+        )
     }
 }

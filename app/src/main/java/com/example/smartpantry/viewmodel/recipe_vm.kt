@@ -7,7 +7,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.smartpantry.model.Recipe
 import com.example.smartpantry.model.RecipeIngredient
+import com.example.smartpantry.remote.CommunityRepository
 import com.example.smartpantry.storage.local.AppDatabase
+import com.example.smartpantry.storage.local.deleteLocalImage
 import com.example.smartpantry.storage.local.saveImageToInternalStorage
 import com.example.smartpantry.storage.local.toEntity
 import com.example.smartpantry.storage.local.toModel
@@ -16,30 +18,43 @@ import com.example.smartpantry.storage.remote.createRecipeIngredient
 import com.example.smartpantry.storage.remote.deleteRecipe as deleteRecipeRemote
 import com.example.smartpantry.storage.remote.deleteRecipeIngredient as deleteIngredientRemote
 import com.example.smartpantry.storage.remote.deleteRecipeIngredients as deleteIngredientsRemote
-import com.example.smartpantry.storage.remote.getRecipeById
+import com.example.smartpantry.storage.remote.getRecipeIngredientsFromRemote
 import com.example.smartpantry.storage.remote.getRecipes
 import com.example.smartpantry.storage.remote.supabase
+import com.example.smartpantry.storage.remote.updateIngredientUser
 import com.example.smartpantry.storage.remote.updateRecipe as updateRecipeRemote
 import com.example.smartpantry.storage.remote.uploadRecipeImage
-import com.example.smartpantry.storage.remote.updateIngredientUser
 import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.status.SessionStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.put
 import java.io.File
+import java.util.UUID
 
 data class CreateRecipeUiState(
     val recipeName: String = "",
     val category: String = "",
     val description: String = "",
+    val cookingSteps: List<String> = listOf(""),
     val isVegan: Boolean = false,
     val imagePath: String? = null,
     val isSaving: Boolean = false,
@@ -77,12 +92,22 @@ data class RecommendedRecipeResult(
     val displayPercentage: Int get() = (expiredRate * 100).toInt()
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class recipe_vm(app: Application) : AndroidViewModel(app) {
 
     private val dao by lazy { AppDatabase.get(app).recipeDao() }
     private val ingredientDao by lazy { AppDatabase.get(app).recipeIngredientDao() }
     private val masterIngredientDao by lazy { AppDatabase.get(app).ingredientDao() }
     private val ingredientUserDao by lazy { AppDatabase.get(app).ingredientUserDao() }
+
+    private val activeUserId: Flow<String?> = supabase.auth.sessionStatus
+        .map { status ->
+            when (status) {
+                is SessionStatus.Authenticated -> status.session.user?.id
+                else -> supabase.auth.currentUserOrNull()?.id
+            }
+        }
+        .distinctUntilChanged()
 
     private val _recipes = MutableStateFlow<List<Recipe>>(emptyList())
     val recipes: StateFlow<List<Recipe>> = _recipes.asStateFlow()
@@ -95,35 +120,77 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+    val isSyncing: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     init {
+        // 1. Purge other users' cached data on login/account switch
         viewModelScope.launch {
-            dao.observeAll().collect { entities ->
-                _recipes.value = entities.map { it.toModel() }
+            activeUserId.collect { uid ->
+                if (uid.isNullOrBlank()) {
+                    _recipes.value = emptyList()
+                    _recommendedRecipes.value = emptyList()
+                    _uiState.value = CreateRecipeUiState()
+                } else {
+                    withContext(Dispatchers.IO) {
+                        dao.deleteOtherUsers(uid)
+                        ingredientUserDao.deleteOtherUsers(uid)
+                        masterIngredientDao.deleteOtherUsersPrivate(uid)
+                    }
+                    refreshRecipes()
+                }
             }
+        }
+
+        // 2. Observe recipes strictly scoped to the active user
+        viewModelScope.launch {
+            activeUserId
+                .flatMapLatest { uid ->
+                    if (uid.isNullOrBlank()) flowOf(emptyList())
+                    else dao.observeByUser(uid)
+                }
+                .collect { entities ->
+                    _recipes.value = entities.map { it.toModel() }
+                }
         }
     }
 
     // Form updaters
-    fun onNameChange(v: String)        = _uiState.update { it.copy(recipeName = v) }
-    fun onCategoryChange(v: String)    = _uiState.update { it.copy(category = v) }
-    fun onDescriptionChange(v: String) = _uiState.update { it.copy(description = v) }
-    fun onVeganChange(v: Boolean=false)= _uiState.update { it.copy(isVegan = v) }
-    fun onImagePicked(path: String?)   = _uiState.update { it.copy(imagePath = path) }
-    fun clearError()                   = _uiState.update { it.copy(error = null) }
-    fun consumeSaved()                 = _uiState.update { it.copy(saved = false) }
+    fun onNameChange(v: String)              = _uiState.update { it.copy(recipeName = v, error = null) }
+    fun onCategoryChange(v: String)          = _uiState.update { it.copy(category = v, error = null) }
+    fun onDescriptionChange(v: String)       = _uiState.update { it.copy(description = v, error = null) }
+    fun onStepsChange(steps: List<String>)   = _uiState.update { it.copy(cookingSteps = steps.take(30), error = null) }
+    fun onVeganChange(v: Boolean = false)    = _uiState.update { it.copy(isVegan = v, error = null) }
+    fun onImagePicked(path: String?)         = _uiState.update { it.copy(imagePath = path, error = null) }
+    fun clearError()                         = _uiState.update { it.copy(error = null) }
+    fun consumeSaved()                       = _uiState.update { it.copy(saved = false) }
 
     fun getIngredientsFlow(recipeId: Long): Flow<List<RecipeIngredient>> =
         ingredientDao.getIngredientsForRecipe(recipeId)
             .map { list -> list.map { it.toModel() } }
 
-
     suspend fun getRecipeDetailIngredients(recipeId: Long): List<RecipeDetailIngredient> =
         withContext(Dispatchers.IO) {
-            val recipeItems = ingredientDao.getIngredientsForRecipeOnce(recipeId).map { it.toModel() }
-            val masterIngredients = masterIngredientDao.getAll().associateBy { it.id }
-            val pantryItems = ingredientUserDao.getAll().filter { it.ingredientId != null }
-            val pantryByIngredient = pantryItems.groupBy { it.ingredientId!! }
+            val uid = supabase.auth.currentUserOrNull()?.id.orEmpty()
+            var recipeItems = ingredientDao.getIngredientsForRecipeOnce(recipeId).map { it.toModel() }
+            if (recipeItems.isEmpty()) {
+                val remote = getRecipeIngredientsFromRemote(recipeId)
+                if (remote.isNotEmpty()) {
+                    ingredientDao.insertAll(remote.map { it.toEntity() })
+                    recipeItems = ingredientDao.getIngredientsForRecipeOnce(recipeId).map { it.toModel() }
+                }
+            }
+
+            val masterIngredients = if (uid.isNotBlank()) {
+                masterIngredientDao.getAllForUser(uid).associateBy { it.id }
+            } else {
+                masterIngredientDao.getAll().associateBy { it.id }
+            }
+            val pantryItems = if (uid.isNotBlank()) {
+                ingredientUserDao.getAllByUser(uid)
+            } else {
+                ingredientUserDao.getAll()
+            }
+            val pantryByIngredient = pantryItems.groupBy { it.ingredientId }
 
             recipeItems.map { item ->
                 val master = masterIngredients[item.ingredientId]
@@ -146,17 +213,18 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
             }
         }
 
-
     /** Deducts a user-entered amount from pantry batches, earliest expiry first. */
     suspend fun useIngredientStock(
         ingredientId: Long,
         amount: Double,
         unit: String
     ): Result<String> = withContext(Dispatchers.IO) {
+        val uid = supabase.auth.currentUserOrNull()?.id.orEmpty()
         if (!amount.isFinite() || amount <= 0.0) {
             return@withContext Result.failure(IllegalArgumentException("Enter an amount greater than 0."))
         }
-        val batches = ingredientUserDao.getAll()
+        val allBatches = if (uid.isNotBlank()) ingredientUserDao.getAllByUser(uid) else ingredientUserDao.getAll()
+        val batches = allBatches
             .filter { it.ingredientId == ingredientId && (it.quantity ?: 0.0) > 0.0 }
             .sortedBy { if (it.expiredDate > 0L) it.expiredDate else Long.MAX_VALUE }
         if (batches.isEmpty()) {
@@ -190,6 +258,7 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
 
     /** Uses the recipe's required amount for every ingredient, only if all stock is available. */
     suspend fun useWholeRecipe(recipeId: Long): Result<String> = withContext(Dispatchers.IO) {
+        val uid = supabase.auth.currentUserOrNull()?.id.orEmpty()
         val recipeItems = ingredientDao.getIngredientsForRecipeOnce(recipeId).map { it.toModel() }
         if (recipeItems.isEmpty()) {
             return@withContext Result.failure(IllegalStateException("This recipe has no ingredients."))
@@ -197,17 +266,19 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
         val requirements = recipeItems.groupBy { it.ingredientId }.mapValues { (_, rows) ->
             rows.sumOf { it.quantity ?: 1.0 } to rows.firstOrNull()?.unit.orEmpty()
         }
-        val allBatches = ingredientUserDao.getAll().filter { it.ingredientId != null }
+        val allBatches = if (uid.isNotBlank()) ingredientUserDao.getAllByUser(uid) else ingredientUserDao.getAll()
+        val masterList = if (uid.isNotBlank()) masterIngredientDao.getAllForUser(uid) else masterIngredientDao.getAll()
+
         for ((ingredientId, requirement) in requirements) {
             val batches = allBatches.filter { it.ingredientId == ingredientId && (it.quantity ?: 0.0) > 0.0 }
             val available = batches.sumOf { it.quantity ?: 0.0 }
             val unit = batches.firstOrNull()?.quantityUnit.orEmpty()
             if (available + 0.000001 < requirement.first) {
-                val name = masterIngredientDao.getAll().firstOrNull { it.id == ingredientId }?.ingredientName ?: "Ingredient $ingredientId"
+                val name = masterList.firstOrNull { it.id == ingredientId }?.ingredientName ?: "Ingredient $ingredientId"
                 return@withContext Result.failure(IllegalStateException("Not enough $name. Need ${requirement.first} ${requirement.second}, available $available $unit."))
             }
             if (!unit.equals(requirement.second, ignoreCase = true)) {
-                val name = masterIngredientDao.getAll().firstOrNull { it.id == ingredientId }?.ingredientName ?: "Ingredient $ingredientId"
+                val name = masterList.firstOrNull { it.id == ingredientId }?.ingredientName ?: "Ingredient $ingredientId"
                 return@withContext Result.failure(IllegalArgumentException("Unit mismatch for $name. Recipe uses '${requirement.second}' but pantry uses '$unit'."))
             }
         }
@@ -233,7 +304,91 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
         Result.success("Recipe ingredients deducted from your pantry.")
     }
 
+    // ==========================================
+    // PUBLISH PERSONAL RECIPE TO COMMUNITY
+    // ==========================================
+    suspend fun publishPersonalRecipe(recipeId: Long): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val uid = supabase.auth.currentUserOrNull()?.id
+                ?: return@withContext Result.failure(IllegalStateException("Please sign in again."))
 
+            val entity = dao.getById(recipeId)
+                ?: return@withContext Result.failure(IllegalStateException("Recipe not found."))
+            val recipe = entity.toModel()
+
+            val stepsToPublish = recipe.cookingSteps.ifEmpty {
+                listOfNotNull(recipe.description?.takeIf { it.isNotBlank() })
+            }
+            if (stepsToPublish.isEmpty()) {
+                return@withContext Result.failure(
+                    IllegalStateException("Add at least one cooking step or description before publishing to Community.")
+                )
+            }
+
+            var ings = ingredientDao.getIngredientsForRecipeOnce(recipeId)
+            if (ings.isEmpty()) {
+                val remote = getRecipeIngredientsFromRemote(recipeId)
+                if (remote.isNotEmpty()) {
+                    ingredientDao.insertAll(remote.map { it.toEntity() })
+                    ings = ingredientDao.getIngredientsForRecipeOnce(recipeId)
+                }
+            }
+            if (ings.isEmpty()) {
+                return@withContext Result.failure(
+                    IllegalStateException("Add at least one ingredient before publishing to Community.")
+                )
+            }
+
+            val repo = CommunityRepository()
+            val uploadedUrl = when {
+                !recipe.recipeImage.isNullOrBlank() && recipe.recipeImage.startsWith("https://") -> recipe.recipeImage
+                !recipe.localRecipeImage.isNullOrBlank() -> repo.uploadImage(recipe.localRecipeImage)
+                else -> ""
+            }
+
+            val requestId = UUID.randomUUID().toString()
+
+            val payload = buildJsonObject {
+                put("recipe_id", recipeId)
+                put("title", recipe.recipeName)
+                put("category", recipe.recipeCategory ?: "Malaysian")
+                put("description", recipe.description.orEmpty())
+                put("image", uploadedUrl)
+                put("vegan", recipe.isVegan)
+                put("request_id", requestId)
+                put("ingredients", buildJsonArray {
+                    ings.forEach { row ->
+                        add(buildJsonObject {
+                            put("ingredient_id", row.ingredientId)
+                            put("quantity", row.quantity ?: 1.0)
+                            put("unit", row.unit ?: "pcs")
+                        })
+                    }
+                })
+                put("steps", buildJsonArray {
+                    stepsToPublish.forEach { step ->
+                        add(JsonPrimitive(step))
+                    }
+                })
+            }
+
+            val response = repo.call("publish", payload)
+            val ok = (response["ok"] as? JsonPrimitive)?.booleanOrNull ?: true
+            if (!ok) {
+                val msg = (response["message"] as? JsonPrimitive)?.contentOrNull
+                    ?: "Unable to publish recipe."
+                return@withContext Result.failure(IllegalStateException(msg))
+            }
+
+            Result.success("Published \"${recipe.recipeName}\" to Community!")
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // ==========================================
+    // CREATE — Local Room + Remote Supabase
+    // ==========================================
     fun createFullRecipe(ingredients: List<RecipeIngredient> = emptyList()) {
         val s = _uiState.value
         if (s.recipeName.isBlank() || s.isSaving) return
@@ -242,7 +397,10 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val currentUserId = supabase.auth.currentUserOrNull()?.id
-                    ?: "facad5cd-98f6-4d8a-b4b5-cf13f0515e0e"
+                if (currentUserId.isNullOrBlank()) {
+                    _uiState.update { it.copy(isSaving = false, error = "Please sign in first.") }
+                    return@launch
+                }
 
                 val localPath = s.imagePath?.let { path ->
                     withContext(Dispatchers.IO) {
@@ -253,12 +411,15 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                     }
                 }
 
+                val cleanSteps = s.cookingSteps.map { it.trim() }.filter { it.isNotEmpty() }
+
                 val newRecipe = Recipe(
                     recipeId = null,
                     recipeName = s.recipeName.trim(),
                     recipeCategory = s.category.takeIf { it.isNotEmpty() },
                     isVegan = s.isVegan,
                     description = s.description.takeIf { it.isNotEmpty() },
+                    cookingSteps = cleanSteps,
                     createAt = System.currentTimeMillis(),
                     localRecipeImage = localPath,
                     recipeImage = null,
@@ -276,10 +437,17 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                 _uiState.update { it.copy(isSaving = false, saved = true) }
                 yield()
                 _uiState.update {
-                    it.copy(recipeName = "", category = "", description = "", isVegan = false, imagePath = null)
+                    it.copy(
+                        recipeName = "",
+                        category = "",
+                        description = "",
+                        cookingSteps = listOf(""),
+                        isVegan = false,
+                        imagePath = null
+                    )
                 }
 
-                // 2) Push to Supabase — same pattern as saveAllToInventory
+                // 2) Push to Supabase
                 pushRecipeToSupabase(localRecipeId)
             } catch (e: Exception) {
                 Log.e("RecipeSync", "Create failed", e)
@@ -327,8 +495,10 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                 val serverIngredientId = created?.id
                 if (serverIngredientId != null) {
                     ingredientDao.replaceId(local.id, local.copy(id = serverIngredientId))
-                    Log.d("RecipeSync",
-                        "ingredient: ${local.id} → $serverIngredientId (recipeId=$serverRecipeId)")
+                    Log.d(
+                        "RecipeSync",
+                        "ingredient: ${local.id} → $serverIngredientId (recipeId=$serverRecipeId)"
+                    )
                 } else {
                     Log.e("RecipeSync", "ingredient ${local.id} not returned from Supabase")
                 }
@@ -343,12 +513,15 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
     }
 
     // ==========================================
-    // UPDATE — same pattern as updateInventoryItem
+    // UPDATE
     // ==========================================
     fun updateRecipe(recipeId: Long, updated: Recipe) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                val uid = supabase.auth.currentUserOrNull()?.id
                 val existing = dao.getById(recipeId) ?: return@launch
+                if (uid != null && existing.userId != null && existing.userId != uid) return@launch
+
                 val finalLocalPath = when {
                     updated.localRecipeImage == null -> existing.localRecipeImage
                     updated.localRecipeImage.startsWith("/data") -> updated.localRecipeImage
@@ -357,6 +530,8 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                     } catch (e: Exception) { existing.localRecipeImage }
                 }
                 val imageChanged = finalLocalPath != existing.localRecipeImage
+                if (imageChanged) deleteLocalImage(existing.localRecipeImage)
+
                 var remoteUrl = if (imageChanged) null else existing.recipeImage
                 if (remoteUrl == null && finalLocalPath != null) {
                     val f = File(finalLocalPath)
@@ -365,7 +540,7 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
 
                 val merged = updated.copy(
                     recipeId = existing.id,
-                    userId = existing.userId,
+                    userId = existing.userId ?: uid,
                     createAt = existing.createAt,
                     localRecipeImage = finalLocalPath,
                     recipeImage = remoteUrl
@@ -379,19 +554,21 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
     }
 
     // ==========================================
-    // DELETE — same pattern as deleteInventoryItem
+    // DELETE
     // ==========================================
+    fun deleteRecipeById(recipeId: Long) = deleteRecipe(recipeId)
+
     fun deleteRecipe(recipeId: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                val uid = supabase.auth.currentUserOrNull()?.id
                 val existing = dao.getById(recipeId) ?: return@launch
+                if (uid != null && existing.userId != null && existing.userId != uid) return@launch
 
-                // delete locally
+                deleteLocalImage(existing.localRecipeImage)
                 ingredientDao.deleteByRecipe(recipeId)
                 dao.deleteById(recipeId)
 
-                // delete remotely (cascade handles ingredients on Supabase,
-                // but call both for safety)
                 deleteIngredientsRemote(existing.id)
                 deleteRecipeRemote(existing.id)
             } catch (e: Exception) {
@@ -399,7 +576,6 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
             }
         }
     }
-
 
     fun addIngredientToRecipe(
         recipeId: Long,
@@ -409,14 +585,12 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // recipeId here is the local id, which equals server id after re-key
                 val recipe = dao.getById(recipeId) ?: run {
                     Log.e("RecipeSync", "addIngredient: recipe $recipeId missing")
                     return@launch
                 }
-                val serverRecipeId = recipe.id   // re-key guarantees this
+                val serverRecipeId = recipe.id
 
-                // save locally
                 val newItem = RecipeIngredient(
                     id = null,
                     recipeId = recipeId,
@@ -426,7 +600,6 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                 )
                 val localId = ingredientDao.insert(newItem.toEntity())
 
-                // push remotely
                 val created = createRecipeIngredient(
                     newItem.copy(id = null, recipeId = serverRecipeId)
                 )
@@ -474,7 +647,8 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
     fun syncPendingItems() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val all = dao.observeAll().first()
+                val uid = supabase.auth.currentUserOrNull()?.id ?: return@launch
+                val all = dao.observeByUser(uid).first()
                 all.filter { it.recipeImage == null }
                     .forEach { pushRecipeToSupabase(it.id) }
             } catch (e: Exception) {
@@ -485,11 +659,21 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
 
     fun refreshRecipes(force: Boolean = false) {
         viewModelScope.launch(Dispatchers.IO) {
+            val uid = supabase.auth.currentUserOrNull()?.id ?: return@launch
             _isLoading.value = true
             try {
-                val remote = getRecipes()
+                dao.deleteOtherUsers(uid)
+                val remote = getRecipes().filter { it.userId == uid }
                 if (remote.isNotEmpty()) {
                     dao.insertAll(remote.map { it.toEntity() })
+                    remote.forEach { r ->
+                        val rId = r.recipeId ?: return@forEach
+                        val remoteIngs = getRecipeIngredientsFromRemote(rId)
+                        ingredientDao.deleteByRecipe(rId)
+                        if (remoteIngs.isNotEmpty()) {
+                            ingredientDao.insertAll(remoteIngs.map { it.toEntity() })
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("RecipeSync", "Refresh failed", e)
@@ -513,15 +697,25 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             _isLoading.value = true
             try {
-                // 1. Get user pantry (expired ingredients)
-                val userPantry = ingredientUserDao.getAll()
-                val pantryMap = userPantry.associateBy { it.ingredientId }
-                val masterIngredients = masterIngredientDao.getAll().associateBy { it.id }
+                val uid = supabase.auth.currentUserOrNull()?.id.orEmpty()
+
+                // 1. Get active user's pantry (grouped so multiple batches sum properly)
+                val userPantry = if (uid.isNotBlank()) {
+                    ingredientUserDao.getAllByUser(uid)
+                } else {
+                    ingredientUserDao.getAll()
+                }
+                val pantryGrouped = userPantry.groupBy { it.ingredientId }
+                val masterIngredients = if (uid.isNotBlank()) {
+                    masterIngredientDao.getAllForUser(uid).associateBy { it.id }
+                } else {
+                    masterIngredientDao.getAll().associateBy { it.id }
+                }
 
                 val currentTime = System.currentTimeMillis()
                 val oneDayMs = 24 * 60 * 60 * 1000L
 
-                // 2. Get all recipes & recipe ingredients
+                // 2. Get active user's recipes & recipe ingredients
                 val allRecipes = _recipes.value
                 val allRecipeIngredients = ingredientDao.getAll().map { it.toModel() }
                 val ingredientsByRecipe = allRecipeIngredients.groupBy { it.recipeId }
@@ -544,9 +738,15 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                         val requiredQty = item.quantity ?: 1.0
                         totalQuantityIngredients += requiredQty
 
-                        val pantryItem = pantryMap[item.ingredientId]
-                        val score = if (pantryItem != null) {
-                            val availableQty = pantryItem.quantity ?: 0.0
+                        val batches = pantryGrouped[item.ingredientId]
+                            ?.filter { (it.quantity ?: 0.0) > 0.0 }
+                            .orEmpty()
+
+                        val score = if (batches.isNotEmpty()) {
+                            val availableQty = batches.sumOf { it.quantity ?: 0.0 }
+                            val earliestExpiry = batches.map { it.expiredDate }
+                                .filter { it > 0L }
+                                .minOrNull() ?: Long.MAX_VALUE
 
                             // 1. Calculate how much of the ingredient you have (0.0 to 1.0)
                             val quantityRatio = if (requiredQty > 0) {
@@ -561,7 +761,7 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                             }
 
                             // 2. Calculate Expiry Base Score
-                            val diffMs = pantryItem.expiredDate - currentTime
+                            val diffMs = earliestExpiry - currentTime
                             val leftDay = diffMs / oneDayMs
 
                             val baseScore = when {

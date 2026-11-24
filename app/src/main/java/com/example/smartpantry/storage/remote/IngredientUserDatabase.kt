@@ -2,21 +2,28 @@ package com.example.smartpantry.storage.remote
 
 import android.util.Log
 import com.example.models.IngredientUser
+import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 suspend fun createIngredientUser(ingredientUser: IngredientUser): IngredientUser =
     withContext(Dispatchers.IO) {
+        val uid = ingredientUser.userId ?: supabase.auth.currentUserOrNull()?.id
         supabase.from("Ingredient_User")
-            .insert(ingredientUser) { select() }
+            .insert(ingredientUser.copy(userId = uid)) { select() }
             .decodeSingle<IngredientUser>()
     }
 
 suspend fun getIngredientUsers(): List<IngredientUser> =
     withContext(Dispatchers.IO) {
         try {
-            supabase.from("Ingredient_User").select().decodeList<IngredientUser>()
+            val uid = supabase.auth.currentUserOrNull()?.id ?: return@withContext emptyList()
+            supabase.from("Ingredient_User")
+                .select {
+                    filter { eq("user_id", uid) }
+                }
+                .decodeList<IngredientUser>()
         } catch (e: Exception) {
             Log.e("IngredientUserSync", "Fetch failed", e)
             emptyList()

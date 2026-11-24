@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenu
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
@@ -55,7 +56,9 @@ fun OutlineDropdownField(
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .menuAnchor(),
+                .menuAnchor(
+                    type = TODO()
+                ),
             shape = RoundedCornerShape(8.dp),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = scheme.primary,

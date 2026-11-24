@@ -1,7 +1,6 @@
 package com.example.smartpantry.community
 
 import com.example.smartpantry.Screen.RecipeUI.CommunityExportMenu
-import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -30,7 +29,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -43,7 +41,6 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
-import com.example.smartpantry.R
 import com.example.smartpantry.Screen.CommunityScreen.cleanDisplay
 import com.example.smartpantry.Screen.CommunityScreen.cleanInput
 import com.example.smartpantry.Screen.CommunityScreenpackage.RecipeDraftHelper
@@ -89,9 +86,9 @@ fun CommunityScreen(initialPostId: Long = 0L, initialSaved: Boolean = false, sta
     Box(Modifier.fillMaxSize().background(scheme.background)) {
         Column(Modifier.fillMaxSize()) {
             SmartPantrySectionHeader(
-                title=when(screen) { "detail"->"Recipe details";"reviews"->"Reviews";"editor" -> if(vm.draft.value.recipeId > 0) "Edit recipe" else "Create recipe";"mine"->"My recipes";"saved"->"Favourites";else->"Community recipes" },
-                showBack=screen!="feed" || initialSaved || initialPostId>0L || startCreate, onBack=back,
-                action=null
+                title =when(screen) { "detail"->"Recipe details";"reviews"->"Reviews";"editor" -> if(vm.draft.value.recipeId > 0) "Edit recipe" else "Create recipe";"mine"->"My recipes";"saved"->"Favourites";else->"Community recipes" },
+                showBack =screen!="feed" || initialSaved || initialPostId>0L || startCreate, onBack =back,
+                action =null
             )
             if(loading&&!root) LinearProgressIndicator(Modifier.fillMaxWidth())
             Crossfade(targetState=screen,modifier=Modifier.weight(1f),animationSpec=tween(180),label="community-page") { visibleScreen ->
@@ -177,7 +174,11 @@ fun CommunityScreen(initialPostId: Long = 0L, initialSaved: Boolean = false, sta
 }
 
 @Composable
-internal fun SmartPantrySectionHeader(title: String,showBack: Boolean,onBack:()->Unit,action:(@Composable ()->Unit)?=null) {
+internal fun SmartPantrySectionHeader(
+    title: String,
+    showBack: Boolean,
+    onBack: (() -> Unit)?,
+    action: @Composable (() -> Unit)? =null) {
     val c=MaterialTheme.colorScheme
     Column {
         Box(Modifier.fillMaxWidth().height(60.dp).background(c.background)) {
@@ -186,8 +187,10 @@ internal fun SmartPantrySectionHeader(title: String,showBack: Boolean,onBack:()-
                 contentDescription="SmartPantry",
                 modifier=Modifier.align(Alignment.Center).width(200.dp).height(46.dp),contentScale=ContentScale.Fit
             )
-            if(showBack) IconButton(onClick=onBack,modifier=Modifier.align(Alignment.CenterStart).padding(start=8.dp)) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")
+            if(showBack) onBack?.let {
+                IconButton(onClick=it,modifier=Modifier.align(Alignment.CenterStart).padding(start=8.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")
+                }
             }
             Row(Modifier.align(Alignment.CenterEnd).padding(end=8.dp),verticalAlignment=Alignment.CenterVertically) { action?.invoke() }
         }

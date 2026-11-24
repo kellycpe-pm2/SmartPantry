@@ -1,0 +1,329 @@
+package com.example.smartpantry.Screen.IngredientUI
+
+import android.content.ClipData
+import android.content.Intent
+import android.graphics.Bitmap
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
+import com.example.models.IngredientUser
+import com.example.smartpantry.Screen.InventoryUI.formatShelfLife
+import com.example.smartpantry.Screen.RecipeUI.buildRecipePdf
+import com.example.smartpantry.Screen.RecipeUI.buildRecipeShareImage
+import com.example.smartpantry.model.Ingredient
+import com.example.smartpantry.model.Recipe
+import com.example.smartpantry.viewmodel.RecipeDetailIngredient
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun IngredientExportMenu(
+    ingredient: Ingredient,
+    batches: List<IngredientUser> = emptyList(),
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var pending by rememberSaveable { mutableStateOf<ByteArray?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    val totalStock = batches.sumOf { it.quantity ?: 0.0 }
+    val primaryUnit = batches.firstOrNull()?.quantityUnit ?: ingredient.unit.orEmpty().ifBlank { "pcs" }
+    val shelfLife = formatShelfLife(ingredient.minExpiredDuration, ingredient.maxExpiredDuration)
+    val dateFmt = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
+
+    val descriptionText = buildString {
+        ingredient.category?.takeIf { it.isNotBlank() }?.let { appendLine("Category: $it") }
+        if (shelfLife != null) appendLine("Typical Shelf Life: $shelfLife")
+        if (batches.isNotEmpty()) appendLine("Current Stock: $totalStock $primaryUnit")
+        ingredient.description?.takeIf { it.isNotBlank() }?.let {
+            appendLine()
+            appendLine(it)
+        }
+    }.trim()
+
+    // Reuse existing Recipe card/PDF generators cleanly for Ingredient details & batches
+    val pseudoRecipe = remember(ingredient, batches) {
+        Recipe(
+            recipeId = ingredient.ingredientId,
+            recipeName = ingredient.ingredientName,
+            recipeCategory = ingredient.category ?: "Ingredient",
+            recipeImage = ingredient.localImagePath ?: ingredient.image,
+            description = descriptionText
+        )
+    }
+
+    val batchRows = remember(key1 = batches, key2 = ingredient) {
+        if (batches.isEmpty()) {
+            listOf(
+                RecipeDetailIngredient(
+                    ingredientId = ingredient.ingredientId ?: 0L,
+                    ingredientName = ingredient.ingredientName,
+                    requiredQuantity = ingredient.weight ?: 1.0,
+                    requiredUnit = ingredient.unit.orEmpty().ifBlank { "pcs" },
+                    availableQuantity = 0.0,
+                    availableUnit = ingredient.unit.orEmpty().ifBlank { "pcs" },
+                    description = descriptionText,
+                    expiryDate = 0L,
+                    image = ingredient.localImagePath ?: ingredient.image,
+                    category = ingredient.category ?: "Uncategorized"
+                )
+            )
+        } else {
+            batches.map { b ->
+                val expLabel = if (b.expiredDate > 0L) " (Exp: ${dateFmt.format(Date(b.expiredDate))})" else ""
+                RecipeDetailIngredient(
+                    ingredientId = ingredient.ingredientId ?: 0L,
+                    ingredientName = "${b.locationStorage ?: "Pantry"}$expLabel",
+                    requiredQuantity = b.quantity ?: 0.0,
+                    requiredUnit = b.quantityUnit.orEmpty(),
+                    availableQuantity = b.quantity ?: 0.0,
+                    availableUnit = b.quantityUnit.orEmpty(),
+                    description = descriptionText,
+                    expiryDate = b.expiredDate,
+                    image = ingredient.localImagePath ?: ingredient.image,
+                    category = ingredient.category ?: "Uncategorized"
+                )
+            }
+        }
+    }
+
+    val plain = remember(ingredient, batches) {
+        buildString {
+            appendLine(ingredient.ingredientName)
+            if (descriptionText.isNotBlank()) appendLine(descriptionText)
+            if (batches.isNotEmpty()) {
+                appendLine()
+                appendLine("PANTRY BATCHES")
+                batches.forEach { b ->
+                    val exp = if (b.expiredDate > 0L) " • Expires ${dateFmt.format(Date(b.expiredDate))}" else ""
+                    appendLine("• ${b.quantity ?: 0.0} ${b.quantityUnit.orEmpty()} in ${b.locationStorage ?: "Pantry"}$exp")
+                }
+            }
+            appendLine("Created with SmartPantry")
+        }
+    }
+
+    val fileName = ingredient.ingredientName
+        .replace(Regex("[^\\p{L}\\p{N}_-]"), "_")
+        .take(80)
+        .ifBlank { "ingredient" }
+
+    fun work(block: suspend () -> Unit) {
+        if (busy) return
+        busy = true
+        scope.launch {
+            try {
+                block()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (problem: Exception) {
+                error = problem.message ?: "Export failed. Retry."
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    fun writeResult(uri: Uri?) {
+        val bytes = pending
+        if (uri != null && bytes != null) {
+            work {
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                        ?: throw IOException("Cannot write to this location.")
+                }
+                pending = null
+            }
+        }
+    }
+
+    val savePdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { writeResult(it) }
+    val saveTxt = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { writeResult(it) }
+
+    fun shareFile(file: File, mime: String) {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        context.startActivity(
+            Intent.createChooser(
+                Intent(Intent.ACTION_SEND).apply {
+                    type = mime
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_SUBJECT, ingredient.ingredientName)
+                    clipData = ClipData.newRawUri("Ingredient", uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                },
+                "Share ingredient"
+            )
+        )
+    }
+
+    ModalBottomSheet(onDismissRequest = { if (!busy) onDismiss() }) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text("Share & export", style = MaterialTheme.typography.titleLarge)
+            Text(ingredient.ingredientName, style = MaterialTheme.typography.bodyMedium)
+            if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+
+            Button(
+                enabled = !busy,
+                onClick = {
+                    work {
+                        val bitmap = withContext(Dispatchers.Default) {
+                            buildRecipeShareImage(pseudoRecipe, batchRows)
+                        }
+                        val file = File(context.cacheDir, "ingredient_${UUID.randomUUID()}.png")
+                        try {
+                            withContext(Dispatchers.IO) {
+                                file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                            }
+                        } finally {
+                            bitmap.recycle()
+                        }
+                        shareFile(file, "image/png")
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp),
+                shape = RoundedCornerShape(50)
+            ) {
+                Icon(Icons.Default.Share, null, Modifier.size(21.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Share Ingredient Image")
+            }
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    enabled = !busy,
+                    onClick = {
+                        work {
+                            context.startActivity(
+                                Intent.createChooser(
+                                    Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_TEXT, plain)
+                                    },
+                                    "Share ingredient"
+                                )
+                            )
+                        }
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp),
+                    shape = RoundedCornerShape(50)
+                ) {
+                    Icon(Icons.Default.Share, null, Modifier.size(20.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Share")
+                }
+
+                Button(
+                    enabled = !busy,
+                    onClick = {
+                        work {
+                            pending = withContext(Dispatchers.Default) {
+                                buildRecipePdf(pseudoRecipe, batchRows)
+                            }
+                            savePdf.launch("$fileName.pdf")
+                        }
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp),
+                    shape = RoundedCornerShape(50)
+                ) {
+                    Icon(Icons.Default.PictureAsPdf, null, Modifier.size(20.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Save PDF")
+                }
+            }
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    enabled = !busy,
+                    onClick = {
+                        pending = plain.toByteArray(Charsets.UTF_8)
+                        saveTxt.launch("$fileName.txt")
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp),
+                    shape = RoundedCornerShape(50)
+                ) {
+                    Icon(Icons.Default.Download, null, Modifier.size(20.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Save TXT")
+                }
+
+                OutlinedButton(
+                    enabled = !busy,
+                    onClick = {
+                        work {
+                            val bytes = withContext(Dispatchers.Default) {
+                                buildRecipePdf(pseudoRecipe, batchRows)
+                            }
+                            val file = File(context.cacheDir, "ingredient_${UUID.randomUUID()}.pdf")
+                            withContext(Dispatchers.IO) { file.writeBytes(bytes) }
+                            shareFile(file, "application/pdf")
+                        }
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp),
+                    shape = RoundedCornerShape(50)
+                ) {
+                    Icon(Icons.Default.PictureAsPdf, null, Modifier.size(20.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Share PDF")
+                }
+            }
+
+            Text(
+                "Sharing options depend on which apps are installed and support the selected format.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
+    }
+}

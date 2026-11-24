@@ -5,17 +5,22 @@ import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.models.IngredientUser
 import com.example.smartpantry.Ai.IngredientAiChatMessage
 import com.example.smartpantry.Ai.IngredientAiRepository
 import com.example.smartpantry.Ai.IngredientAiSuggestion
+import com.example.smartpantry.hardware.NotificationHelper
 import com.example.smartpantry.model.Ingredient
 import com.example.smartpantry.storage.local.AppDatabase
+import com.example.smartpantry.storage.local.deleteLocalImage
 import com.example.smartpantry.storage.local.saveImageToInternalStorage
 import com.example.smartpantry.storage.local.toEntity
 import com.example.smartpantry.storage.local.toModel
 import com.example.smartpantry.storage.remote.*
 import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.status.SessionStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -46,8 +51,18 @@ data class CreateIngredientUiState(
     val canSubmit: Boolean get() = ingredientName.isNotBlank() && !isSaving
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class IngredientViewModel(app: Application) : AndroidViewModel(app) {
     private val dao by lazy { AppDatabase.get(app).ingredientDao() }
+
+    private val activeUserId: Flow<String?> = supabase.auth.sessionStatus
+        .map { status ->
+            when (status) {
+                is SessionStatus.Authenticated -> status.session.user?.id
+                else -> supabase.auth.currentUserOrNull()?.id
+            }
+        }
+        .distinctUntilChanged()
 
     private val _ingredients = MutableStateFlow<List<Ingredient>>(emptyList())
     val ingredients: StateFlow<List<Ingredient>> = _ingredients.asStateFlow()
@@ -63,12 +78,33 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
     private var publishOnCreate: Boolean = false
 
     init {
+        // 1. Purge other users' private ingredients on login/account switch
         viewModelScope.launch {
-            dao.observeAll().collect { entities ->
-                _ingredients.value = entities.map { it.toModel() }
+            activeUserId.collect { uid ->
+                if (uid.isNullOrBlank()) {
+                    _ingredients.value = emptyList()
+                    _uiState.value = CreateIngredientUiState()
+                } else {
+                    withContext(Dispatchers.IO) {
+                        dao.deleteOtherUsersPrivate(uid)
+                    }
+                    refreshIngredients(force = true)
+                    syncPendingImages()
+                }
             }
         }
-        syncPendingImages()
+
+        // 2. Observe published ingredients + private ingredients created by the active user
+        viewModelScope.launch {
+            activeUserId
+                .flatMapLatest { uid ->
+                    if (uid.isNullOrBlank()) flowOf(emptyList())
+                    else dao.observeForUser(uid)
+                }
+                .collect { entities ->
+                    _ingredients.value = entities.map { it.toModel() }
+                }
+        }
     }
 
     // --- Form Updaters ---
@@ -83,6 +119,12 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
     fun clearError() = _uiState.update { it.copy(error = null) }
     fun consumeSaved() = _uiState.update { it.copy(saved = false) }
     fun setPublishOnCreate(publish: Boolean) { publishOnCreate = publish }
+
+    /** True only if the active user created this ingredient. */
+    fun canEditIngredient(ingredient: Ingredient): Boolean {
+        val uid = currentUserId() ?: return false
+        return ingredient.userId == uid
+    }
 
     // ==========================================
     // GEMINI AI INGREDIENT ASSISTANT
@@ -197,6 +239,12 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
         val s = _uiState.value
         if (s.ingredientName.isBlank() || s.isSaving) return
 
+        val uid = currentUserId()
+        if (uid.isNullOrBlank()) {
+            _uiState.update { it.copy(error = "Please sign in before creating an ingredient.") }
+            return
+        }
+
         _uiState.update { it.copy(isSaving = true, error = null) }
 
         viewModelScope.launch {
@@ -214,7 +262,7 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
 
-                // 2. Build model
+                // 2. Build model scoped to active user
                 val ingredient = Ingredient(
                     ingredientName = s.ingredientName.trim(),
                     category = s.category.takeIf { it.isNotEmpty() },
@@ -228,7 +276,7 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
                     createAt = System.currentTimeMillis(),
                     updateAt = System.currentTimeMillis(),
                     isPublish = publishOnCreate,
-                    userId = currentUserId()
+                    userId = uid
                 )
 
                 // 3. Save to Room
@@ -299,7 +347,14 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
                 val entity = dao.getById(localId) ?: return@launch
                 val model = entity.toModel().copy(isPublish = true)
                 dao.insert(model.toEntity())
-                createIngredient(model)
+                val created = createIngredient(model)
+                if (created.ingredientId != null && created.ingredientId > 0) {
+                    dao.deleteById(localId)
+                    dao.insert(
+                        created.copy(localImagePath = model.localImagePath ?: created.localImagePath)
+                            .toEntity()
+                    )
+                }
                 Log.d("IngredientSync", "Published to Supabase: id=$localId")
             } catch (e: Exception) {
                 Log.e("IngredientSync", "Publish failed", e)
@@ -313,9 +368,10 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
     fun syncPendingImages() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val all = dao.observeAll().first()
-                // Retry any ingredient that has a local image but no remote URL
-                all.filter { it.localImagePath != null && it.image == null }
+                val uid = currentUserId() ?: return@launch
+                val all = dao.observeForUser(uid).first()
+                // Retry any ingredient owned by this user that has a local image but no remote URL
+                all.filter { it.userId == uid && it.localImagePath != null && it.image == null }
                     .forEach { uploadImageOnly(it.id) }
             } catch (e: Exception) {
                 Log.e("IngredientSync", "Pending sync failed", e)
@@ -327,6 +383,7 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
     // REFRESH
     // ==========================================
     fun refreshIngredients(force: Boolean = false) {
+        val uid = currentUserId() ?: return
         val now = System.currentTimeMillis()
         if (!force && (now - lastSyncTime) < syncIntervalMs) return
         if (_isRefreshing.value) return
@@ -334,6 +391,9 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
         _isRefreshing.value = true
         viewModelScope.launch {
             try {
+                withContext(Dispatchers.IO) {
+                    dao.deleteOtherUsersPrivate(uid)
+                }
                 val remote = getIngredients()
                 if (remote.isNotEmpty()) {
                     dao.insertAll(remote.map { it.toEntity() })
@@ -348,13 +408,22 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ==========================================
-    // UPDATE
+    // UPDATE (Creator-Only)
     // ==========================================
     fun updateIngredient(id: Long, updated: Ingredient) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                dao.insert(updated.copy(ingredientId = id).toEntity())
-                com.example.smartpantry.storage.remote.updateIngredient(id, updated)
+                val uid = currentUserId() ?: return@launch
+                val existing = dao.getById(id) ?: return@launch
+                if (existing.userId != uid) return@launch
+
+                val merged = updated.copy(
+                    ingredientId = id,
+                    userId = uid,
+                    updateAt = System.currentTimeMillis()
+                )
+                dao.insert(merged.toEntity())
+                com.example.smartpantry.storage.remote.updateIngredient(id, merged)
                 refreshIngredients(force = true)
             } catch (e: Exception) {
                 Log.e("IngredientSync", "Update failed", e)
@@ -363,11 +432,16 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ==========================================
-    // DELETE
+    // DELETE (Creator-Only)
     // ==========================================
     fun deleteIngredient(id: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                val uid = currentUserId() ?: return@launch
+                val existing = dao.getById(id) ?: return@launch
+                if (existing.userId != uid) return@launch
+
+                deleteLocalImage(existing.localImagePath)
                 dao.deleteById(id)
                 com.example.smartpantry.storage.remote.deleteIngredient(id)
                 refreshIngredients(force = true)
@@ -378,12 +452,20 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ==========================================
-    // TOGGLE PUBLISH (Draft <-> Published)
+    // TOGGLE PUBLISH (Draft <-> Published, Creator-Only)
     // ==========================================
     fun togglePublish(id: Long, ing: Ingredient) {
         viewModelScope.launch(Dispatchers.IO) {
+            val uid = currentUserId() ?: return@launch
+            val existing = dao.getById(id) ?: return@launch
+            if (existing.userId != uid) return@launch
+
             val newState = !(ing.isPublish ?: false)
-            val updated = ing.copy(isPublish = newState, updateAt = System.currentTimeMillis())
+            val updated = ing.copy(
+                isPublish = newState,
+                userId = uid,
+                updateAt = System.currentTimeMillis()
+            )
             dao.insert(updated.copy(ingredientId = id).toEntity())
 
             if (newState) {
@@ -404,4 +486,7 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+
+
 }

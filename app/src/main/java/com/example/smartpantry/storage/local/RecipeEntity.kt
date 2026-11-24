@@ -3,6 +3,8 @@ package com.example.smartpantry.storage.local
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.example.smartpantry.model.Recipe
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 @Entity(tableName = "recipe")
 data class RecipeEntity(
@@ -11,6 +13,7 @@ data class RecipeEntity(
     val recipeCategory: String?,
     val isVegan: Boolean,
     val description: String?,
+    val cookingStepsJson: String = "[]",
     val createAt: Long,
     val localRecipeImage: String?,
     val recipeImage: String?,
@@ -23,6 +26,8 @@ fun RecipeEntity.toModel() = Recipe(
     recipeCategory = recipeCategory,
     isVegan = isVegan,
     description = description,
+    cookingSteps = runCatching { Json.decodeFromString<List<String>>(cookingStepsJson) }
+        .getOrDefault(emptyList()),
     createAt = createAt,
     localRecipeImage = localRecipeImage,
     recipeImage = recipeImage,
@@ -35,6 +40,7 @@ fun Recipe.toEntity() = RecipeEntity(
     recipeCategory = recipeCategory,
     isVegan = isVegan,
     description = description,
+    cookingStepsJson = Json.encodeToString(cookingSteps),
     createAt = createAt ?: System.currentTimeMillis(),
     localRecipeImage = localRecipeImage,
     recipeImage = recipeImage,

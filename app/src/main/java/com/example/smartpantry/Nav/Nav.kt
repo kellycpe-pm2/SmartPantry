@@ -45,7 +45,7 @@ import com.example.smartpantry.Screen.Auth.ResetPasswordScreen
 import com.example.smartpantry.Screen.IngredientUI.CreateIngredientScreen
 import com.example.smartpantry.Screen.IngredientUI.EditIngredientScreen
 import com.example.smartpantry.Screen.IngredientUI.EditInventoryScreen
-import com.example.smartpantry.Screen.IngredientUI.RecipeScreen
+import com.example.smartpantry.Screen.IngredientUI.IngredientDetailScreen
 import com.example.smartpantry.Screen.Profile.AccountSecurityScreen
 import com.example.smartpantry.Screen.Profile.ProfileScreen
 import com.example.smartpantry.viewmodel.ProfileViewModel
@@ -54,6 +54,7 @@ import com.example.smartpantry.Screen.InventoryUI.InventoryScreen
 import com.example.smartpantry.Screen.RecipeUI.CreateRecipeScreen
 import com.example.smartpantry.Screen.RecipeUI.EditRecipeScreen
 import com.example.smartpantry.Screen.RecipeUI.RecipeDetailScreen
+import com.example.smartpantry.Screen.RecipeUI.RecipeScreen
 import com.example.smartpantry.Screen.ShoppingListScreen
 import com.example.smartpantry.Screen.SplashScreen
 import com.example.smartpantry.storage.remote.supabase
@@ -110,17 +111,13 @@ fun AppNavHost(
 
     // ViewModels
     val authViewModel: AuthViewModel = viewModel()
-
     val adminVm: AdminViewModel = viewModel()
-
     val profileViewModel: ProfileViewModel = viewModel()
     val profile by profileViewModel.profile.collectAsState()
-
 
     val ingredientVm: IngredientViewModel = viewModel()
     val recipeVm: recipe_vm = viewModel()
     val ingredientUserVm: IngredientUserViewModel = viewModel()
-
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -161,7 +158,6 @@ fun AppNavHost(
                         }
                     },
                     onAddClick = {
-                        // Navigate to create screen based on current tab
                         val routeToAdd = if (currentRoute == "recipes") "community_create" else "add"
                         navController.navigate(routeToAdd) {
                             launchSingleTop = true
@@ -240,18 +236,35 @@ fun AppNavHost(
                 }
             }
 
-
-            composable("pantry")  {
+            composable("pantry") {
                 InventoryScreen(
                     onAddInventoryClick = { navController.navigate("add_ingredient") },
-                    onCreateIngredientClick = {navController.navigate("add")},
+                    onCreateIngredientClick = { navController.navigate("add") },
                     onEditIngredientClick = { id -> navController.navigate("edit_ingredient/$id") },
+                    onIngredientClick = { id -> navController.navigate("ingredient_detail/$id") },
+                    onEditClick = { id -> navController.navigate("edit_inventory/$id") },
                     vm = ingredientUserVm,
                     ingredientVm = ingredientVm,
-                    onEditClick = { id -> navController.navigate("edit_inventory/$id") }
+                    onBack = goHome
                 )
             }
 
+            composable(
+                route = "ingredient_detail/{ingredientId}",
+                arguments = listOf(navArgument("ingredientId") { type = NavType.LongType })
+            ) { entry ->
+                val id = entry.arguments?.getLong("ingredientId") ?: 0L
+                IngredientDetailScreen(
+                    ingredientId = id,
+                    onBackClick = { navController.popBackStack() },
+                    onEditClick = { navController.navigate("edit_ingredient/$id") },
+                    onAddInventoryClick = { _ -> navController.navigate("add_ingredient") },
+                    onRecipeClick = { recipeId -> navController.navigate("recipe_detail/$recipeId") },
+                    ingredientVm = ingredientVm,
+                    inventoryVm = ingredientUserVm,
+                    recipeVm = recipeVm
+                )
+            }
 
             composable("edit_ingredient/{ingredientId}") { entry ->
                 val id = entry.arguments?.getString("ingredientId")?.toLongOrNull() ?: 0L
@@ -269,37 +282,44 @@ fun AppNavHost(
                 )
             }
 
-
             // --- RECIPES TAB ---
-
-
             composable("recipes") {
-                CommunityScreen(onBack = goHome, onRootChanged = { communityRoot = it }, onPersonalRecipes = { navController.navigate("personal_recipes") }, onShoppingList = { navController.navigate("shopping_list") })
+                CommunityScreen(
+                    onBack = goHome,
+                    onRootChanged = { communityRoot = it },
+                    onPersonalRecipes = { navController.navigate("personal_recipes") },
+                    onShoppingList = { navController.navigate("shopping_list") }
+                )
             }
-            composable("community_post/{postId}",
+            composable(
+                "community_post/{postId}",
                 arguments = listOf(navArgument("postId") { type = NavType.LongType })
             ) { entry ->
-                CommunityScreen(initialPostId = entry.arguments!!.getLong("postId"),
-
+                CommunityScreen(
+                    initialPostId = entry.arguments!!.getLong("postId"),
                     onPersonalRecipes = { navController.navigate("personal_recipes") },
                     onShoppingList = { navController.navigate("shopping_list") },
-                    onBack = { navController.popBackStack() })
+                    onBack = { navController.popBackStack() }
+                )
             }
             composable("community_create") {
-                CommunityScreen(startCreate = true,
+                CommunityScreen(
+                    startCreate = true,
                     onPersonalRecipes = { navController.navigate("personal_recipes") },
                     onShoppingList = { navController.navigate("shopping_list") },
-                    onBack = { navController.popBackStack() })
+                    onBack = { navController.popBackStack() }
+                )
             }
-            // Keep the team's personal-recipe screen available for inventory workflows.
             composable("personal_recipes") {
                 Column(Modifier.fillMaxSize()) {
                     TextButton(onClick = { navController.popBackStack() }) { Text("‹ Back to community") }
                     Box(Modifier.weight(1f)) {
                         RecipeScreen(
-                            vm = recipeVm,
-                            onAddRecipeClick = { navController.navigate("create_recipe") },
-                            onRecipeClick = { id -> navController.navigate("recipe_detail/$id") }
+                            onCreateClick = { navController.navigate("create_recipe") },
+                            onRecipeClick = { id -> navController.navigate("recipe_detail/$id") },
+                            onEditClick = { id -> navController.navigate("editRecipe/$id") },
+                            recipeVm = recipeVm,
+                            onBackClick = { navController.popBackStack() }
                         )
                     }
                 }
@@ -327,7 +347,6 @@ fun AppNavHost(
                     onBackClick = { navController.popBackStack() }
                 )
             }
-
 
             composable("records") { UserDashboardScreen() }
 
@@ -379,13 +398,18 @@ fun AppNavHost(
             }
 
             composable("favourites") {
-                CommunityScreen(initialSaved = true,
+                CommunityScreen(
+                    initialSaved = true,
                     onPersonalRecipes = { navController.navigate("personal_recipes") },
                     onShoppingList = { navController.navigate("shopping_list") },
-                    onBack = { navController.popBackStack() })
+                    onBack = { navController.popBackStack() }
+                )
             }
             composable("shopping_list") {
-                ShoppingListScreen(onBack = { navController.popBackStack() }, onInventoryChanged = { ingredientUserVm.refreshAfterShoppingTransfer() })
+                ShoppingListScreen(
+                    onBack = { navController.popBackStack() },
+                    onInventoryChanged = { ingredientUserVm.refreshAfterShoppingTransfer() }
+                )
             }
 
             // --- ADD INGREDIENT ---
@@ -405,25 +429,24 @@ fun AppNavHost(
                 )
             }
 
-
-            //--ADD INGREDIENT TO INVENTORY
-            composable("add_ingredient"){
-
+            // --- ADD INGREDIENT TO INVENTORY ---
+            composable("add_ingredient") {
                 var popped by remember { mutableStateOf(false) }
 
-                AddInventoryFlowScreen({
-
-                    if (!popped) {
-                        popped = true
-                        if (navController.currentBackStackEntry?.destination?.route == "add_ingredient") {
-                            navController.popBackStack(route = "add_ingredient", inclusive = true)
+                AddInventoryFlowScreen(
+                    {
+                        if (!popped) {
+                            popped = true
+                            if (navController.currentBackStackEntry?.destination?.route == "add_ingredient") {
+                                navController.popBackStack(route = "add_ingredient", inclusive = true)
+                            }
                         }
-                    }
-                },ingredientUserVm)
+                    },
+                    ingredientUserVm
+                )
             }
 
             // --- ADD RECIPE ---
-
             composable("create_recipe") {
                 var popped by remember { mutableStateOf(false) }
                 CreateRecipeScreen(
@@ -435,15 +458,16 @@ fun AppNavHost(
                             }
                         }
                     },
-                    recipeVm,ingredientVm
+                    recipeVm,
+                    ingredientVm
                 )
             }
         }
     }
 }
+
 @Composable
 fun AppRoot() {
-    // Keep the same controller and saved route while Auth refreshes or a photo app is open.
     val navController = rememberNavController()
     val status by supabase.auth.sessionStatus.collectAsState()
     var initialRoute by rememberSaveable { mutableStateOf<String?>(null) }
@@ -455,8 +479,6 @@ fun AppRoot() {
     var splashFinished by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) { delay(900); splashFinished = true }
     val start = initialRoute
-    // Keep the NavHost mounted below the splash so auth/photo lifecycle events
-    // cannot recreate it. The splash is shown once for this saved activity state.
     Box(Modifier.fillMaxSize()) {
         if (start != null) AppNavHost(startRoute = start, navController = navController)
         AnimatedVisibility(
@@ -465,6 +487,7 @@ fun AppRoot() {
         ) { SplashScreen() }
     }
 }
+
 @Composable
 private fun LoadingBox() {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -496,7 +519,7 @@ private fun FloatingBottomBar(
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val leftTabs  = items.take(2)
+            val leftTabs = items.take(2)
             val rightTabs = items.takeLast(3)
 
             leftTabs.forEach { item ->

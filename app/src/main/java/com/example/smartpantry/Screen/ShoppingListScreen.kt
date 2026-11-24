@@ -14,13 +14,11 @@ import com.example.smartpantry.community.SmartPantrySectionHeader
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.UUID
 
@@ -48,17 +46,16 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import java.time.LocalDate
 import java.util.Locale
-import android.content.Intent
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import com.example.smartpantry.Screen.CommunityScreen.cleanDisplay
 import com.example.smartpantry.Screen.CommunityScreen.cleanInput
 import com.example.smartpantry.remote.CommunityRepository
@@ -68,8 +65,10 @@ import java.time.Instant
 import java.time.ZoneId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import java.io.File
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import kotlin.math.ceil
 
 @Serializable
 private data class ListItem(
@@ -182,7 +181,7 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                android.util.Log.e("ShoppingList", "Supabase operation failed", e)
+                Log.e("ShoppingList", "Supabase operation failed", e)
                 message = userMessage(e)
             } finally {
                 offline = repository.offline
@@ -314,7 +313,7 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
         color = MaterialTheme.colorScheme.background
     ) {
         Column(Modifier.fillMaxSize()) {
-            SmartPantrySectionHeader(title=title,showBack=true,onBack={if(!busy)goBack()})
+            SmartPantrySectionHeader(title =title, showBack =true, onBack ={if(!busy)goBack()})
             // Shared header, spacing and theme with Community.
             key(page) {
                 PullToRefreshBox(isRefreshing=refreshing,onRefresh={if(!busy){refreshing=true;mutate{try{load(forceSync=true)}finally{refreshing=false}}}},modifier=Modifier.fillMaxSize()) {
@@ -544,7 +543,7 @@ private fun FoodThumbnail(item: ListItem, size: Int = 38) {
     Box(Modifier.size(size.dp),contentAlignment=Alignment.Center) {
         if(!photoLoaded && item.photoUri!="" && item.imageRes!=null) Image(painterResource(item.imageRes),null,Modifier.fillMaxSize(),contentScale=ContentScale.Fit)
         else if(!photoLoaded) Icon(Icons.Default.Eco,null,tint=MaterialTheme.colorScheme.primary,modifier=Modifier.size((size*0.6).dp))
-        if(!item.photoUri.isNullOrBlank()) AsyncImage(model=if(item.photoUri.startsWith("/"))java.io.File(item.photoUri) else item.photoUri,
+        if(!item.photoUri.isNullOrBlank()) AsyncImage(model=if(item.photoUri.startsWith("/")) File(item.photoUri) else item.photoUri,
             contentDescription=item.name,modifier=Modifier.fillMaxSize(),contentScale=ContentScale.Fit,
             onSuccess={photoLoaded=true},onError={photoLoaded=false})
     }
@@ -574,7 +573,7 @@ private fun ShoppingRow(
             )
             FoodThumbnail(item,48)
             Column(Modifier.weight(1f).padding(start = 6.dp)) {
-                Text(item.name, fontWeight = FontWeight.Bold,style=MaterialTheme.typography.titleMedium,maxLines=2,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                Text(item.name, fontWeight = FontWeight.Bold,style=MaterialTheme.typography.titleMedium,maxLines=2,overflow= TextOverflow.Ellipsis)
                 Text(
                     "${formatQuantity(item.quantity)} ${item.unit}",
                     style = MaterialTheme.typography.bodySmall
@@ -753,7 +752,7 @@ private fun buildReviewSuggestions(
         val expiring = (comparable.filter { !it.expiry.isAfter(today.plusDays(1)) }
             .sumOf { it.quantity } - used / factor).coerceAtLeast(0.0)
         val missing = (item.plannedQuantity - stock).coerceAtLeast(0.0)
-        val buy = if(item.unit in measuredUnits) kotlin.math.ceil((missing-0.00000001).coerceAtLeast(0.0)*1000)/1000 else kotlin.math.ceil(missing)
+        val buy = if(item.unit in measuredUnits) ceil((missing-0.00000001).coerceAtLeast(0.0)*1000) /1000 else ceil(missing)
         ReviewSuggestion(item, stock, buy, expiring, comparable,
             comparable.isEmpty() && matching.isNotEmpty())
     }
@@ -986,7 +985,9 @@ private fun ShoppingQuantityRow(
             ExposedDropdownMenuBox(expanded=expanded,onExpandedChange={expanded=it},modifier=Modifier.weight(1f)) {
                 OutlinedTextField(value=unit,onValueChange={},readOnly=true,label={Text("Unit")},singleLine=true,
                     trailingIcon={ExposedDropdownMenuDefaults.TrailingIcon(expanded=expanded)},shape=RoundedCornerShape(12.dp),
-                    modifier=Modifier.menuAnchor().fillMaxWidth())
+                    modifier=Modifier.menuAnchor(
+                        type = TODO()
+                    ).fillMaxWidth())
                 ExposedDropdownMenu(expanded=expanded,onDismissRequest={expanded=false}) {
                     shoppingUnits.forEach { option -> DropdownMenuItem(text={Text(option)},onClick={expanded=false;onUnit(option)}) }
                 }
@@ -1002,13 +1003,13 @@ private fun ShoppingQuantityRow(
 @Composable
 private fun ShoppingCalendar(label:String,date:LocalDate?,earliest:LocalDate?=null,latest:LocalDate?=null,onDate:(LocalDate)->Unit) {
     var calendarOpen by rememberSaveable { mutableStateOf(false) }
-    fun utc(day:LocalDate)=day.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
-    fun day(value:Long)=Instant.ofEpochMilli(value).atZone(java.time.ZoneOffset.UTC).toLocalDate()
+    fun utc(day:LocalDate)=day.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+    fun day(value:Long)=Instant.ofEpochMilli(value).atZone(ZoneOffset.UTC).toLocalDate()
     Column {
         Text(label,style=MaterialTheme.typography.labelLarge)
         OutlinedButton(onClick={calendarOpen=true},modifier=Modifier.fillMaxWidth().heightIn(min=54.dp),shape=RoundedCornerShape(12.dp)) {
             Icon(Icons.Default.CalendarMonth,null,Modifier.size(20.dp));Spacer(Modifier.width(10.dp))
-            Text(date?.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy",Locale.ENGLISH)) ?: "Select date",Modifier.weight(1f))
+            Text(date?.format(DateTimeFormatter.ofPattern("d MMM yyyy",Locale.ENGLISH)) ?: "Select date",Modifier.weight(1f))
             ShoppingActionIcon(expanded=calendarOpen)
         }
     }
@@ -1034,7 +1035,7 @@ private fun ShoppingPhotoEditor(item: ListItem, onPhotoChange: (String?) -> Unit
         if(uri!=null)photoScope.launch {
             try {
                 val path= CommunityRepository().importImage(context,uri)
-                onPhotoChange(Uri.fromFile(java.io.File(path)).toString());failed=false
+                onPhotoChange(Uri.fromFile(File(path)).toString());failed=false
             } catch(cancelled:CancellationException){throw cancelled} catch(error:Exception){failed=true}
         }
     }
@@ -1076,7 +1077,7 @@ private fun ShoppingIngredientPicker(
     val photoScope=rememberCoroutineScope()
     val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if(uri!=null)photoScope.launch {
-            try { customPhoto=Uri.fromFile(java.io.File(CommunityRepository().importImage(context,uri))).toString();photoError=false } catch(cancelled:CancellationException){throw cancelled} catch(error:Exception){photoError=true}
+            try { customPhoto=Uri.fromFile(File(CommunityRepository().importImage(context,uri))).toString();photoError=false } catch(cancelled:CancellationException){throw cancelled} catch(error:Exception){photoError=true}
         }
     }
 

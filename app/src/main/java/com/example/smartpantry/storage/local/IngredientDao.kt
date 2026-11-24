@@ -11,8 +11,14 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface IngredientDao {
 
+    @Query("SELECT * FROM ingredient WHERE isPublish = 1 OR userId = :userId ORDER BY id DESC")
+    fun observeForUser(userId: String): Flow<List<IngredientEntity>>
+
     @Query("SELECT * FROM ingredient ORDER BY id DESC")
     fun observeAll(): Flow<List<IngredientEntity>>
+
+    @Query("SELECT * FROM ingredient WHERE isPublish = 1 OR userId = :userId ORDER BY id DESC")
+    suspend fun getAllForUser(userId: String): List<IngredientEntity>
 
     @Query("SELECT * FROM ingredient ORDER BY id DESC")
     suspend fun getAll(): List<IngredientEntity>
@@ -37,6 +43,9 @@ interface IngredientDao {
 
     @Query("DELETE FROM ingredient WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM ingredient WHERE (isPublish IS NULL OR isPublish = 0) AND userId != :activeUserId")
+    suspend fun deleteOtherUsersPrivate(activeUserId: String)
 
     @Query("DELETE FROM ingredient")
     suspend fun clear()
