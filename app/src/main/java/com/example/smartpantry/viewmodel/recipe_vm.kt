@@ -118,11 +118,6 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
             .map { list -> list.map { it.toModel() } }
 
 
-    /**
-     * Loads the recipe ingredients together with their master-ingredient details
-     * and the user's pantry stock. Quantities are compared in the units saved
-     * by the user; this method intentionally does not convert between units.
-     */
     suspend fun getRecipeDetailIngredients(recipeId: Long): List<RecipeDetailIngredient> =
         withContext(Dispatchers.IO) {
             val recipeItems = ingredientDao.getIngredientsForRecipeOnce(recipeId).map { it.toModel() }

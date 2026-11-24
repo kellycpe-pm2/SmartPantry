@@ -1,5 +1,10 @@
 package com.example.smartpantry.ui.navigation
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -9,6 +14,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.example.smartpantry.community.CommunityScreen
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -47,6 +54,8 @@ import com.example.smartpantry.Screen.InventoryUI.InventoryScreen
 import com.example.smartpantry.Screen.RecipeUI.CreateRecipeScreen
 import com.example.smartpantry.Screen.RecipeUI.EditRecipeScreen
 import com.example.smartpantry.Screen.RecipeUI.RecipeDetailScreen
+import com.example.smartpantry.Screen.ShoppingListScreen
+import com.example.smartpantry.Screen.SplashScreen
 import com.example.smartpantry.storage.remote.supabase
 import com.example.smartpantry.ui.home.UserDashboardScreen
 import com.example.smartpantry.viewmodel.AdminViewModel
@@ -91,6 +100,14 @@ fun AppNavHost(
         )
     )
 
+    val goHome: () -> Unit = {
+        val returned = navController.popBackStack("home", false, true)
+        if (!returned) navController.navigate("home") {
+            launchSingleTop = true
+            popUpTo(navController.graph.id)
+        }
+    }
+
     // ViewModels
     val authViewModel: AuthViewModel = viewModel()
 
@@ -108,6 +125,7 @@ fun AppNavHost(
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
+    var communityRoot by rememberSaveable { mutableStateOf(true) }
     val bottomNavRoutes = listOf("home", "pantry", "recipes", "records", "profile")
 
     val sessionStatus by supabase.auth.sessionStatus.collectAsState()
@@ -127,20 +145,24 @@ fun AppNavHost(
 
     Scaffold(
         bottomBar = {
-            if (currentRoute in bottomNavRoutes) {
+            if (currentRoute in bottomNavRoutes && (currentRoute != "recipes" || communityRoot)) {
                 FloatingBottomBar(
                     items = items,
                     currentRoute = currentRoute,
                     onTabSelected = { route ->
-                        navController.navigate(route) {
-                            launchSingleTop = true
-                            popUpTo("home") { saveState = true }
-                            restoreState = true
+                        if (route != navController.currentBackStackEntry?.destination?.route) {
+                            if (route == "home") {
+                                goHome()
+                            } else navController.navigate(route) {
+                                launchSingleTop = true
+                                popUpTo("home") { saveState = true }
+                                restoreState = true
+                            }
                         }
                     },
                     onAddClick = {
                         // Navigate to create screen based on current tab
-                        val routeToAdd = if (currentRoute == "recipes") "create_recipe" else "add"
+                        val routeToAdd = if (currentRoute == "recipes") "community_create" else "add"
                         navController.navigate(routeToAdd) {
                             launchSingleTop = true
                         }
@@ -152,7 +174,11 @@ fun AppNavHost(
         NavHost(
             navController = navController,
             startDestination = startRoute,
-            modifier = Modifier.padding(padding)
+            modifier = Modifier.padding(padding),
+            enterTransition = { fadeIn(tween(180)) },
+            exitTransition = { fadeOut(tween(140)) },
+            popEnterTransition = { fadeIn(tween(180)) },
+            popExitTransition = { fadeOut(tween(140)) }
         ) {
             composable("login") {
                 LaunchedEffect(Unit) { authViewModel.clearError() }
@@ -204,7 +230,13 @@ fun AppNavHost(
                         navController.navigate("admin") { popUpTo("home") { inclusive = true } }
                     }
                 } else {
-                    UserDashboardScreen()
+                    UserDashboardScreen(
+                        onOpenCommunityPost = { id -> navController.navigate("community_post/$id") },
+                        onShoppingList = { navController.navigate("shopping_list") },
+                        onPantry = { navController.navigate("pantry") },
+                        onRecipes = { navController.navigate("recipes") },
+                        onRecords = { navController.navigate("records") }
+                    )
                 }
             }
 
@@ -242,11 +274,35 @@ fun AppNavHost(
 
 
             composable("recipes") {
-                RecipeScreen(
-                    vm = recipeVm,
-                    onAddRecipeClick = { navController.navigate("create_recipe") },
-                    onRecipeClick = { id -> navController.navigate("recipe_detail/$id") }
-                )
+                CommunityScreen(onBack = goHome, onRootChanged = { communityRoot = it }, onPersonalRecipes = { navController.navigate("personal_recipes") }, onShoppingList = { navController.navigate("shopping_list") })
+            }
+            composable("community_post/{postId}",
+                arguments = listOf(navArgument("postId") { type = NavType.LongType })
+            ) { entry ->
+                CommunityScreen(initialPostId = entry.arguments!!.getLong("postId"),
+
+                    onPersonalRecipes = { navController.navigate("personal_recipes") },
+                    onShoppingList = { navController.navigate("shopping_list") },
+                    onBack = { navController.popBackStack() })
+            }
+            composable("community_create") {
+                CommunityScreen(startCreate = true,
+                    onPersonalRecipes = { navController.navigate("personal_recipes") },
+                    onShoppingList = { navController.navigate("shopping_list") },
+                    onBack = { navController.popBackStack() })
+            }
+            // Keep the team's personal-recipe screen available for inventory workflows.
+            composable("personal_recipes") {
+                Column(Modifier.fillMaxSize()) {
+                    TextButton(onClick = { navController.popBackStack() }) { Text("‹ Back to community") }
+                    Box(Modifier.weight(1f)) {
+                        RecipeScreen(
+                            vm = recipeVm,
+                            onAddRecipeClick = { navController.navigate("create_recipe") },
+                            onRecipeClick = { id -> navController.navigate("recipe_detail/$id") }
+                        )
+                    }
+                }
             }
 
             composable(
@@ -322,8 +378,15 @@ fun AppNavHost(
                 }
             }
 
-            composable("favourites")    { UserDashboardScreen() }
-            composable("shopping_list") { UserDashboardScreen() }
+            composable("favourites") {
+                CommunityScreen(initialSaved = true,
+                    onPersonalRecipes = { navController.navigate("personal_recipes") },
+                    onShoppingList = { navController.navigate("shopping_list") },
+                    onBack = { navController.popBackStack() })
+            }
+            composable("shopping_list") {
+                ShoppingListScreen(onBack = { navController.popBackStack() }, onInventoryChanged = { ingredientUserVm.refreshAfterShoppingTransfer() })
+            }
 
             // --- ADD INGREDIENT ---
             composable("add") {
@@ -380,13 +443,26 @@ fun AppNavHost(
 }
 @Composable
 fun AppRoot() {
+    // Keep the same controller and saved route while Auth refreshes or a photo app is open.
+    val navController = rememberNavController()
     val status by supabase.auth.sessionStatus.collectAsState()
-    when (status) {
-        is SessionStatus.Initializing -> LoadingBox()
-        else -> {
-            val start = remember { if (status is SessionStatus.Authenticated) "home" else "login" }
-            AppNavHost(startRoute = start)
+    var initialRoute by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(status) {
+        if (initialRoute == null && status !is SessionStatus.Initializing) {
+            initialRoute = if (status is SessionStatus.Authenticated) "home" else "login"
         }
+    }
+    var splashFinished by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) { delay(900); splashFinished = true }
+    val start = initialRoute
+    // Keep the NavHost mounted below the splash so auth/photo lifecycle events
+    // cannot recreate it. The splash is shown once for this saved activity state.
+    Box(Modifier.fillMaxSize()) {
+        if (start != null) AppNavHost(startRoute = start, navController = navController)
+        AnimatedVisibility(
+            visible = !splashFinished || start == null,
+            enter = fadeIn(tween(180)), exit = fadeOut(tween(220))
+        ) { SplashScreen() }
     }
 }
 @Composable

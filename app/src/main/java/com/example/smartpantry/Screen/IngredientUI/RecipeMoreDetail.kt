@@ -1,5 +1,6 @@
 package com.example.smartpantry.Screen.RecipeUI
 
+import com.example.smartpantry.community.ReadableText
 import android.content.Intent
 import android.graphics.Paint
 import android.graphics.Bitmap
@@ -37,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
+import com.example.smartpantry.Screen.CommunityScreen.cleanDisplay
 import com.example.smartpantry.model.Recipe
 import com.example.smartpantry.viewmodel.RecipeDetailIngredient
 import com.example.smartpantry.viewmodel.recipe_vm
@@ -48,6 +50,8 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.ui.platform.LocalLocale
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -108,7 +112,7 @@ fun RecipeDetailScreen(
         appendLine()
         r.description?.takeIf { it.isNotBlank() }?.let {
             appendLine("INSTRUCTIONS")
-            appendLine(it)
+            appendLine(cleanDisplay(it))
             appendLine()
         }
         appendLine("INGREDIENTS")
@@ -173,21 +177,9 @@ fun RecipeDetailScreen(
     Scaffold(
         containerColor = scheme.background,
         topBar = {
-            TopAppBar(
-                title = {
-                    Text("Recipe Details", fontWeight = FontWeight.Bold, color = scheme.primary)
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = scheme.primary)
-                    }
-                },
-                actions = {
-                    IconButton(onClick = onEditClick) {
-                        Icon(Icons.Default.Edit, contentDescription = "Edit recipe", tint = scheme.primary)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = scheme.background)
+            com.example.smartpantry.community.SmartPantrySectionHeader(
+                title="Recipe details",showBack=true,onBack=onBackClick,
+                action={IconButton(onClick=onEditClick){Icon(Icons.Default.Edit,"Edit recipe",tint=scheme.primary)}}
             )
         }
     ) { padding ->
@@ -229,7 +221,7 @@ fun RecipeDetailScreen(
                         }
                         recipe.description?.takeIf { it.isNotBlank() }?.let {
                             Text("Instructions", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                            Text(it, color = scheme.onSurfaceVariant, fontSize = 14.sp)
+                            ReadableText(it)
                         }
                     }
                 }
@@ -286,10 +278,10 @@ fun RecipeDetailScreen(
                                     Text(item.ingredientName, fontWeight = FontWeight.SemiBold)
                                     Text("Required: ${item.requiredQuantity} ${item.requiredUnit}".trim(), fontSize = 12.sp, color = scheme.onSurfaceVariant)
                                     Text("In pantry: ${item.availableQuantity} ${item.availableUnit}".trim(), fontSize = 12.sp, color = scheme.onSurfaceVariant)
-                                    item.category?.let { Text(it, fontSize = 11.sp, color = scheme.onSurfaceVariant) }
-                                    item.description?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 11.sp, color = scheme.onSurfaceVariant) }
+                                    item.category?.let { Text(cleanDisplay(it), fontSize = 11.sp, color = scheme.onSurfaceVariant) }
+                                    item.description?.takeIf { it.isNotBlank() }?.let { Text(cleanDisplay(it), fontSize = 11.sp, color = scheme.onSurfaceVariant) }
                                     item.expiryDate?.let {
-                                        val date = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(it))
+                                        val date = SimpleDateFormat("dd MMM yyyy", LocalLocale.current.platformLocale).format(Date(it))
                                         Text("Nearest expiry: $date", fontSize = 11.sp, color = scheme.onSurfaceVariant)
                                     }
                                     OutlinedButton(
@@ -429,7 +421,7 @@ fun RecipeDetailScreen(
                         enabled = !usingStock
                     )
                     useMessage?.let {
-                        Text(it, color = if (useMessageIsError) scheme.error else Color(0xFF278653))
+                        Text(cleanDisplay(it), color = if (useMessageIsError) scheme.error else Color(0xFF278653))
                     }
                 }
             },
@@ -502,151 +494,4 @@ fun RecipeDetailScreen(
             }
         )
     }
-}
-
-/** Creates a shareable recipe poster locally; no network/image-generation service is required. */
-private fun buildRecipeShareImage(
-    recipe: Recipe,
-    ingredients: List<RecipeDetailIngredient>
-): Bitmap {
-    val width = 1080
-    val height = 1440
-    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
-    val background = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.rgb(241, 250, 248) }
-    canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), background)
-
-    val dark = android.graphics.Color.rgb(30, 65, 61)
-    val muted = android.graphics.Color.rgb(91, 116, 111)
-    val green = android.graphics.Color.rgb(61, 139, 111)
-    val white = android.graphics.Color.WHITE
-    val panel = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = white }
-    val header = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.rgb(211, 239, 231) }
-    canvas.drawRoundRect(RectF(42f, 42f, 1038f, 1398f), 42f, 42f, panel)
-    canvas.drawRoundRect(RectF(42f, 42f, 1038f, 380f), 42f, 42f, header)
-
-    fun textPaint(size: Float, color: Int, bold: Boolean = false) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = size
-        this.color = color
-        typeface = if (bold) Typeface.create(Typeface.DEFAULT, Typeface.BOLD) else Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-    }
-    val brandPaint = textPaint(34f, green, true)
-    val titlePaint = textPaint(58f, dark, true)
-    val subtitlePaint = textPaint(28f, muted)
-    val headingPaint = textPaint(34f, dark, true)
-    val itemPaint = textPaint(27f, dark)
-    val statusPaint = textPaint(23f, green, true)
-    val missingPaint = textPaint(23f, android.graphics.Color.rgb(183, 73, 65), true)
-
-    canvas.drawText("SMARTPANTRY  •  COOK WITH WHAT YOU HAVE", 88f, 112f, brandPaint)
-    val titleLines = wrapCanvasText(recipe.recipeName, titlePaint, 900f).take(2)
-    var y = 205f
-    titleLines.forEach { canvas.drawText(it, 88f, y, titlePaint); y += 68f }
-    val category = buildString {
-        append(recipe.recipeCategory?.takeIf { it.isNotBlank() } ?: "Recipe")
-        if (recipe.isVegan) append("   •   Vegan 🌱")
-    }
-    canvas.drawText(category.take(58), 90f, 330f, subtitlePaint)
-
-    var currentY = 450f
-    canvas.drawText("INGREDIENT CHECKLIST", 88f, currentY, headingPaint)
-    currentY += 54f
-    val shown = ingredients.take(12)
-    shown.forEach { ingredient ->
-        val isAvailable = ingredient.isAvailable
-        val line = "${ingredient.ingredientName}: ${ingredient.requiredQuantity} ${ingredient.requiredUnit}".trim()
-        val linePaint = itemPaint
-        wrapCanvasText(line, linePaint, 720f).take(1).forEach {
-            canvas.drawText(it, 92f, currentY, linePaint)
-        }
-        val status = if (isAvailable) "AVAILABLE" else "MISSING"
-        canvas.drawText(status, 790f, currentY, if (isAvailable) statusPaint else missingPaint)
-        currentY += 48f
-        val stock = "Pantry: ${ingredient.availableQuantity} ${ingredient.availableUnit}".trim()
-        canvas.drawText(stock.take(70), 112f, currentY, subtitlePaint)
-        currentY += 45f
-        if (currentY > 1190f) return@forEach
-    }
-    if (ingredients.size > shown.size) {
-        canvas.drawText("+ ${ingredients.size - shown.size} more ingredients", 92f, minOf(currentY + 8f, 1260f), subtitlePaint)
-    }
-    val available = ingredients.count { it.isAvailable }
-    val summary = "$available / ${ingredients.size} ingredients available"
-    canvas.drawRoundRect(RectF(82f, 1270f, 998f, 1345f), 24f, 24f, header)
-    canvas.drawText(summary, 112f, 1318f, headingPaint)
-    canvas.drawText("Made with SmartPantry", 88f, 1375f, textPaint(22f, muted))
-    return bitmap
-}
-
-private fun wrapCanvasText(text: String, paint: Paint, maxWidth: Float): List<String> {
-    val words = text.split(Regex("\\s+"))
-    val lines = mutableListOf<String>()
-    var line = ""
-    for (word in words) {
-        val candidate = if (line.isEmpty()) word else "$line $word"
-        if (paint.measureText(candidate) <= maxWidth || line.isEmpty()) {
-            line = candidate
-        } else {
-            lines += line
-            line = word
-        }
-    }
-    if (line.isNotEmpty()) lines += line
-    return lines
-}
-
-private fun buildRecipePdf(
-    recipe: Recipe,
-    ingredients: List<RecipeDetailIngredient>
-): ByteArray {
-    val pdf = PdfDocument()
-    val pageWidth = 595
-    val pageHeight = 842
-    val margin = 42f
-    val titlePaint = Paint().apply { textSize = 22f; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); isAntiAlias = true }
-    val headingPaint = Paint().apply { textSize = 14f; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); isAntiAlias = true }
-    val bodyPaint = Paint().apply { textSize = 11f; isAntiAlias = true }
-    val mutedPaint = Paint().apply { textSize = 9f; color = android.graphics.Color.DKGRAY; isAntiAlias = true }
-    val lines = mutableListOf<Pair<String, Paint>>()
-    lines += recipe.recipeName to titlePaint
-    lines += (recipe.recipeCategory ?: "Recipe") to mutedPaint
-    if (recipe.isVegan) lines += "Vegan" to mutedPaint
-    lines += "" to bodyPaint
-    recipe.description?.takeIf { it.isNotBlank() }?.let {
-        lines += "INSTRUCTIONS" to headingPaint
-        lines += it to bodyPaint
-    }
-    lines += "" to bodyPaint
-    lines += "INGREDIENTS" to headingPaint
-    ingredients.forEach {
-        val status = if (it.isAvailable) "Available" else "Missing / insufficient"
-        lines += "• ${it.ingredientName} — ${it.requiredQuantity} ${it.requiredUnit} ($status)" to bodyPaint
-        lines += "  Pantry: ${it.availableQuantity} ${it.availableUnit}" to mutedPaint
-        it.description?.takeIf(String::isNotBlank)?.let { desc -> lines += "  $desc" to mutedPaint }
-    }
-    lines += "" to bodyPaint
-    lines += "Created with SmartPantry" to mutedPaint
-
-    var pageNumber = 1
-    var page = pdf.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create())
-    var canvas = page.canvas
-    var y = 58f
-    canvas.drawText("SmartPantry", margin, 30f, mutedPaint)
-    for ((line, paint) in lines) {
-        if (y > pageHeight - 55f) {
-            pdf.finishPage(page)
-            pageNumber++
-            page = pdf.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create())
-            canvas = page.canvas
-            y = 58f
-            canvas.drawText("SmartPantry", margin, 30f, mutedPaint)
-        }
-        if (line.isNotEmpty()) canvas.drawText(line.take(95), margin, y, paint)
-        y += if (paint === titlePaint) 34f else if (paint === headingPaint) 24f else 18f
-    }
-    pdf.finishPage(page)
-    val output = ByteArrayOutputStream()
-    pdf.writeTo(output)
-    pdf.close()
-    return output.toByteArray()
 }

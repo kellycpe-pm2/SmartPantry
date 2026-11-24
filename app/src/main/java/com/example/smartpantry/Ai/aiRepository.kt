@@ -135,9 +135,6 @@ object IngredientAiRepository {
                     "apikey",
                     SUPABASE_PUBLISHABLE_KEY
                 )
-
-                // IMPORTANT:
-                // This must be the signed-in user's Supabase JWT.
                 setRequestProperty(
                     "Authorization",
                     "Bearer $accessToken"

@@ -77,6 +77,19 @@ class IngredientUserViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // Shopping creates a real remote batch. Sync its ingredient before the
+    // inventory row so Room joins cannot briefly miss the newly created item.
+    fun refreshAfterShoppingTransfer() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val ingredients=getIngredients()
+                if(ingredients.isNotEmpty()) ingredientDao.insertAll(ingredients.map{it.toEntity()})
+                val batches=getIngredientUsers()
+                if(batches.isNotEmpty()) dao.insertAll(batches.map{it.toEntity()})
+            } catch(cancelled:kotlinx.coroutines.CancellationException) { throw cancelled } catch(problem:Exception) { Log.e("Inventory","Shopping transfer refresh failed",problem) }
+        }
+    }
+
     fun refreshInventory(force: Boolean = false) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
