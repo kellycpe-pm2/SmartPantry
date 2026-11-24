@@ -13,3 +13,19 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Node.js dependencies
+node_modules/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Supabase local files
+supabase/.temp/
+
+# Android build files
+.gradle/
+build/
+*/build/
