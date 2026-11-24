@@ -15,6 +15,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.smartpantry.Ai.IngredientAiAssistantDialog
 import com.example.smartpantry.hardware.rememberCameraCapture
 import com.example.smartpantry.hardware.rememberGalleryPicker
 import com.example.smartpantry.ui.theme.ImageInput
@@ -39,6 +40,18 @@ fun CreateIngredientScreen(
             vm.consumeSaved()
             onBackClick()
         }
+    }
+
+    if (state.aiDialogVisible) {
+        IngredientAiAssistantDialog(
+            state = state,
+            onDismiss = vm::closeAiAssistant,
+            onSelectTab = vm::setAiTab,
+            onGenerate = vm::requestAiSuggestions,
+            onApply = vm::applyAiSuggestion,
+            onChatInputChange = vm::onAiChatInputChange,
+            onSendChat = vm::sendAiChatMessage
+        )
     }
 
     // Error dialog
@@ -147,6 +160,17 @@ fun CreateIngredientScreen(
                 label = "Ingredient Name",
                 image = Icons.Default.Inventory
             )
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedButton(
+                onClick = vm::openAiAssistant,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp)
+            ) {
+                Icon(Icons.Default.AutoAwesome, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Ask SmartPantry AI")
+            }
             Spacer(Modifier.height(16.dp))
 
             OutlineDropdownField(

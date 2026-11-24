@@ -5,6 +5,9 @@ import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.smartpantry.Ai.IngredientAiChatMessage
+import com.example.smartpantry.Ai.IngredientAiRepository
+import com.example.smartpantry.Ai.IngredientAiSuggestion
 import com.example.smartpantry.model.Ingredient
 import com.example.smartpantry.storage.local.AppDatabase
 import com.example.smartpantry.storage.local.saveImageToInternalStorage
@@ -31,6 +34,14 @@ data class CreateIngredientUiState(
     val isSaving: Boolean = false,
     val error: String? = null,
     val saved: Boolean = false,
+    val aiDialogVisible: Boolean = false,
+    val aiLoading: Boolean = false,
+    val aiError: String? = null,
+    val aiSuggestion: IngredientAiSuggestion? = null,
+    val aiTab: String = "suggestions",
+    val aiChatInput: String = "",
+    val aiChatMessages: List<IngredientAiChatMessage> = emptyList(),
+    val aiChatSending: Boolean = false,
 ) {
     val canSubmit: Boolean get() = ingredientName.isNotBlank() && !isSaving
 }
@@ -72,6 +83,109 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
     fun clearError() = _uiState.update { it.copy(error = null) }
     fun consumeSaved() = _uiState.update { it.copy(saved = false) }
     fun setPublishOnCreate(publish: Boolean) { publishOnCreate = publish }
+
+    // ==========================================
+    // GEMINI AI INGREDIENT ASSISTANT
+    // ==========================================
+    fun openAiAssistant() {
+        _uiState.update { it.copy(aiDialogVisible = true, aiError = null, aiTab = "suggestions") }
+        if (_uiState.value.ingredientName.isNotBlank()) requestAiSuggestions()
+    }
+
+    fun closeAiAssistant() {
+        _uiState.update { it.copy(aiDialogVisible = false, aiError = null) }
+    }
+
+    fun setAiTab(tab: String) {
+        _uiState.update { it.copy(aiTab = tab, aiError = null) }
+    }
+
+    fun onAiChatInputChange(value: String) {
+        _uiState.update { it.copy(aiChatInput = value) }
+    }
+
+    fun requestAiSuggestions() {
+        val ingredientName = _uiState.value.ingredientName.trim()
+        if (ingredientName.isBlank()) {
+            _uiState.update { it.copy(aiError = "Enter an ingredient name first, then ask AI.") }
+            return
+        }
+        if (_uiState.value.aiLoading) return
+
+        _uiState.update { it.copy(aiLoading = true, aiError = null, aiSuggestion = null, aiTab = "suggestions") }
+        viewModelScope.launch {
+            try {
+                val accessToken = supabase.auth.currentSessionOrNull()?.accessToken
+                    ?: throw IllegalStateException("Please sign in again before using the AI assistant.")
+                val suggestion = IngredientAiRepository.suggest(accessToken, ingredientName)
+                _uiState.update { it.copy(aiSuggestion = suggestion, aiLoading = false) }
+            } catch (e: Exception) {
+                Log.e("IngredientAI", "Suggestion request failed", e)
+                _uiState.update { it.copy(aiLoading = false, aiError = e.message ?: "Unable to get AI suggestions.") }
+            }
+        }
+    }
+
+    fun applyAiSuggestion() {
+        val suggestion = _uiState.value.aiSuggestion ?: return
+        _uiState.update {
+            it.copy(
+                ingredientName = suggestion.normalizedName,
+                category = suggestion.category,
+                unit = suggestion.unit,
+                minExpiryDays = suggestion.minExpiryDays.toString(),
+                maxExpiryDays = suggestion.maxExpiryDays.toString(),
+                description = buildString {
+                    append(suggestion.description.trim())
+                    if (suggestion.storageAdvice.isNotBlank()) {
+                        if (isNotEmpty()) append("\n\n")
+                        append("Storage advice: ")
+                        append(suggestion.storageAdvice.trim())
+                    }
+                },
+                aiDialogVisible = false,
+                aiError = null
+            )
+        }
+        // Storage advice is appended to the existing description field so no new
+        // database column or migration is required.
+    }
+
+    fun sendAiChatMessage() {
+        val current = _uiState.value
+        val message = current.aiChatInput.trim()
+        if (message.isBlank() || current.aiChatSending) return
+        val ingredientName = current.ingredientName.trim()
+            .ifBlank { current.aiSuggestion?.normalizedName.orEmpty() }
+            .ifBlank { "general pantry ingredients" }
+        val previousHistory = current.aiChatMessages
+        val userMessage = IngredientAiChatMessage(role = "user", text = message)
+        _uiState.update {
+            it.copy(
+                aiChatMessages = it.aiChatMessages + userMessage,
+                aiChatInput = "",
+                aiChatSending = true,
+                aiError = null,
+                aiTab = "chat"
+            )
+        }
+        viewModelScope.launch {
+            try {
+                val accessToken = supabase.auth.currentSessionOrNull()?.accessToken
+                    ?: throw IllegalStateException("Please sign in again before chatting with AI.")
+                val reply = IngredientAiRepository.chat(accessToken, ingredientName, message, previousHistory)
+                _uiState.update {
+                    it.copy(
+                        aiChatMessages = it.aiChatMessages + IngredientAiChatMessage("assistant", reply),
+                        aiChatSending = false
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("IngredientAI", "Chat request failed", e)
+                _uiState.update { it.copy(aiChatSending = false, aiError = e.message ?: "Unable to send your question.") }
+            }
+        }
+    }
 
     private fun currentUserId(): String? =
         try { supabase.auth.currentUserOrNull()?.id } catch (_: Exception) { null }
