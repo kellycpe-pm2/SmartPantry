@@ -12,6 +12,6 @@ data class IngredientUser(
     @SerialName("quantity_unit") val quantityUnit: String? = null,
     @SerialName("location_storage") val locationStorage: String? = null,
     @SerialName("expiredDate") val expiredDate: Long,
-    @SerialName("user_id") val userId: String? = null, // UUID as String in Kotlin
+    @SerialName("user_id") val userId: String? = null,
     @SerialName("ingredientId") val ingredientId: Long? = null
 )
