@@ -7,6 +7,8 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.buildJsonObject
@@ -24,7 +26,7 @@ object ProfileRepository {
     private const val TABLE = "User"
     private var currentAuthId: String? = null
 
-    suspend fun signIn(email: String, password: String) {
+    suspend fun signIn(email: String, password: String) = withContext(Dispatchers.IO) {
         supabase.auth.signInWith(Email) {
             this.email = email
             this.password = password
@@ -33,7 +35,7 @@ object ProfileRepository {
         currentAuthId = supabase.auth.currentUserOrNull()?.id
     }
 
-    suspend fun signUp(email: String, password: String) {
+    suspend fun signUp(email: String, password: String) = withContext(Dispatchers.IO) {
         val info = supabase.auth.signUpWith(Email) {
             this.email = email
             this.password = password
@@ -42,48 +44,49 @@ object ProfileRepository {
         if (info != null && info.identities.isNullOrEmpty()) error("already registered")
     }
 
-    suspend fun completeProfile(name: String, phone: String, householdSize: Int, dateOfBirth: String?) {
+    suspend fun completeProfile(name: String, phone: String, householdSize: Int, dateOfBirth: String?) = withContext(Dispatchers.IO) {
         val id = supabase.auth.currentUserOrNull()?.id ?: error("Not signed in")
         supabase.from(TABLE).update(
             ProfileUpdate(name, phone, householdSize, dateOfBirth)
         ) { filter { eq("id", id) } }
     }
 
-    suspend fun verifySignUpCode(email: String, code: String) {
+    suspend fun verifySignUpCode(email: String, code: String) = withContext(Dispatchers.IO) {
         supabase.auth.verifyEmailOtp(type = OtpType.Email.SIGNUP, email = email, token = code)
         currentAuthId = supabase.auth.currentUserOrNull()?.id
     }
-    suspend fun resendSignUpCode(email: String) {
+    suspend fun resendSignUpCode(email: String) = withContext(Dispatchers.IO) {
         supabase.auth.resendEmail(OtpType.Email.SIGNUP, email)
     }
 
-    suspend fun emailExists(email: String): Boolean =
+    suspend fun emailExists(email: String): Boolean = withContext(Dispatchers.IO) {
         supabase.postgrest.rpc("email_exists", buildJsonObject { put("check_email", email) })
             .decodeAs<Boolean>()
+    }
 
-    suspend fun signOut() {
+    suspend fun signOut() = withContext(Dispatchers.IO) {
         currentAuthId = null
         supabase.auth.signOut()
     }
 
-    suspend fun changeEmail(newEmail: String) {
+    suspend fun changeEmail(newEmail: String) = withContext(Dispatchers.IO) {
         supabase.auth.updateUser { email = newEmail }
     }
 
-    suspend fun changePassword(newPassword: String) {
+    suspend fun changePassword(newPassword: String) = withContext(Dispatchers.IO) {
         supabase.auth.updateUser { password = newPassword }
     }
 
-    suspend fun sendResetCode(email: String) {
+    suspend fun sendResetCode(email: String) = withContext(Dispatchers.IO) {
         supabase.auth.resetPasswordForEmail(email)
     }
 
-    suspend fun verifyResetCode(email: String, code: String) {
+    suspend fun verifyResetCode(email: String, code: String) = withContext(Dispatchers.IO) {
         supabase.auth.verifyEmailOtp(type = OtpType.Email.RECOVERY, email = email, token = code)
         currentAuthId = supabase.auth.currentUserOrNull()?.id
     }
 
-    suspend fun loadMyProfile(): User {
+    suspend fun loadMyProfile(): User = withContext(Dispatchers.IO) {
         supabase.auth.awaitInitialization()
 
         // Get fresh UUID every time + cache it
@@ -91,12 +94,12 @@ object ProfileRepository {
             ?: throw IllegalStateException("Not signed in — please log in")
         currentAuthId = userId
 
-        return supabase.from(TABLE)
+        supabase.from(TABLE)
             .select { filter { eq("id", userId) } }
             .decodeSingle<User>()
     }
 
-    suspend fun updateMyProfile(profile: User) {
+    suspend fun updateMyProfile(profile: User) = withContext(Dispatchers.IO) {
         val userId = currentAuthId
             ?: throw IllegalStateException("Not signed in")
 

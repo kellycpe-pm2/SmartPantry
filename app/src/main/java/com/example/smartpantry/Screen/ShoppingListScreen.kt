@@ -985,9 +985,7 @@ private fun ShoppingQuantityRow(
             ExposedDropdownMenuBox(expanded=expanded,onExpandedChange={expanded=it},modifier=Modifier.weight(1f)) {
                 OutlinedTextField(value=unit,onValueChange={},readOnly=true,label={Text("Unit")},singleLine=true,
                     trailingIcon={ExposedDropdownMenuDefaults.TrailingIcon(expanded=expanded)},shape=RoundedCornerShape(12.dp),
-                    modifier=Modifier.menuAnchor(
-                        type = TODO()
-                    ).fillMaxWidth())
+                    modifier=Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth())
                 ExposedDropdownMenu(expanded=expanded,onDismissRequest={expanded=false}) {
                     shoppingUnits.forEach { option -> DropdownMenuItem(text={Text(option)},onClick={expanded=false;onUnit(option)}) }
                 }

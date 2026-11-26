@@ -26,23 +26,24 @@ suspend fun createIngredient(ingredient: Ingredient): Ingredient =
             .decodeSingle<Ingredient>()
     }
 
-suspend fun getIngredients(): List<Ingredient> {
-    val uid = supabase.auth.currentUserOrNull()?.id
-    return supabase.from("Ingredient")
-        .select {
-            filter {
-                if (uid != null) {
-                    or {
+suspend fun getIngredients(): List<Ingredient> =
+    withContext(Dispatchers.IO) {
+        val uid = supabase.auth.currentUserOrNull()?.id
+        supabase.from(TABLE)
+            .select {
+                filter {
+                    if (uid != null) {
+                        or {
+                            eq("is_publish", true)
+                            eq("userId", uid)
+                        }
+                    } else {
                         eq("is_publish", true)
-                        eq("userId", uid)
                     }
-                } else {
-                    eq("is_publish", true)
                 }
             }
-        }
-        .decodeList()
-}
+            .decodeList()
+    }
 
 suspend fun updateIngredient(id: Long, ingredient: Ingredient): Ingredient? =
     withContext(Dispatchers.IO) {

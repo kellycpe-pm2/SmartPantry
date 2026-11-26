@@ -805,10 +805,7 @@ fun IngredientDetailScreen(
                                         },
                                         shape = RoundedCornerShape(14.dp),
                                         modifier = Modifier
-                                            .menuAnchor(
-                                                type = TODO(),
-                                                enabled = TODO()
-                                            )
+                                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                                             .fillMaxWidth()
                                     )
                                     ExposedDropdownMenu(
@@ -847,10 +844,7 @@ fun IngredientDetailScreen(
                                     },
                                     shape = RoundedCornerShape(14.dp),
                                     modifier = Modifier
-                                        .menuAnchor(
-                                            type = TODO(),
-                                            enabled = TODO()
-                                        )
+                                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                                         .fillMaxWidth()
                                 )
                                 ExposedDropdownMenu(

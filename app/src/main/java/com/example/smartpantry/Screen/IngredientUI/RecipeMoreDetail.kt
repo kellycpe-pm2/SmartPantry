@@ -2,7 +2,12 @@ package com.example.smartpantry.Screen.RecipeUI
 
 import com.example.smartpantry.community.ReadableText
 import android.content.Intent
+import android.graphics.Paint
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -12,8 +17,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -35,11 +45,12 @@ import com.example.smartpantry.viewmodel.recipe_vm
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Locale
 import androidx.compose.ui.platform.LocalLocale
-import kotlin.text.isNotBlank
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -73,12 +84,102 @@ fun RecipeDetailScreen(
         loading = false
     }
 
+    val pdfSaveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/pdf")
+    ) { uri: Uri? ->
+        val bytes = exportBytes
+        if (uri != null && bytes != null) {
+            scope.launch(Dispatchers.IO) {
+                context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+            }
+        }
+    }
+    val textSaveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri: Uri? ->
+        val bytes = exportBytes
+        if (uri != null && bytes != null) {
+            scope.launch(Dispatchers.IO) {
+                context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+            }
+        }
+    }
+
+    fun recipeText(r: Recipe, list: List<RecipeDetailIngredient>): String = buildString {
+        appendLine(r.recipeName)
+        appendLine(r.recipeCategory ?: "Recipe")
+        if (r.isVegan) appendLine("Vegan")
+        appendLine()
+        r.description?.takeIf { it.isNotBlank() }?.let {
+            appendLine("INSTRUCTIONS")
+            appendLine(cleanDisplay(it))
+            appendLine()
+        }
+        appendLine("INGREDIENTS")
+        list.forEach {
+            val status = if (it.isAvailable) "Available" else "Missing"
+            appendLine("- ${it.ingredientName}: ${it.requiredQuantity} ${it.requiredUnit} ($status)")
+            appendLine("  Pantry: ${it.availableQuantity} ${it.availableUnit}")
+            it.description?.takeIf(String::isNotBlank)?.let { detail -> appendLine("  $detail") }
+        }
+        appendLine()
+        appendLine("Created with SmartPantry")
+    }
+
+    fun shareText(r: Recipe, list: List<RecipeDetailIngredient>) {
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "SmartPantry recipe: ${r.recipeName}")
+            putExtra(Intent.EXTRA_TEXT, recipeText(r, list))
+        }
+        context.startActivity(Intent.createChooser(send, "Share recipe"))
+    }
+
+    fun shareRecipeImage(r: Recipe, list: List<RecipeDetailIngredient>) {
+        scope.launch {
+            val bitmap = withContext(Dispatchers.Default) { buildRecipeShareImage(r, list) }
+            val file = File(context.cacheDir, "smartpantry_recipe_${r.recipeId ?: "share"}.png")
+            withContext(Dispatchers.IO) {
+                file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            }
+            val uri = FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", file
+            )
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_SUBJECT, "SmartPantry recipe: ${r.recipeName}")
+                putExtra(Intent.EXTRA_TEXT, "${r.recipeName}\nShared with SmartPantry")
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(send, "Share recipe image"))
+        }
+    }
+
+    fun sharePdf(r: Recipe, list: List<RecipeDetailIngredient>) {
+        scope.launch {
+            val bytes = withContext(Dispatchers.IO) { buildRecipePdf(r, list) }
+            val file = File(context.cacheDir, "shared_recipe_${r.recipeId ?: "recipe"}.pdf")
+            withContext(Dispatchers.IO) { file.writeBytes(bytes) }
+            val uri = FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", file
+            )
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "application/pdf"
+                putExtra(Intent.EXTRA_SUBJECT, "SmartPantry recipe: ${r.recipeName}")
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(send, "Share recipe PDF"))
+        }
+    }
+
     Scaffold(
         containerColor = scheme.background,
         topBar = {
             com.example.smartpantry.community.SmartPantrySectionHeader(
-                title ="Recipe details", showBack =true, onBack =onBackClick,
-                action ={IconButton(onClick=onEditClick){Icon(Icons.Default.Edit,"Edit recipe",tint=scheme.primary)}}
+                title="Recipe details",showBack=true,onBack=onBackClick,
+                action={IconButton(onClick=onEditClick){Icon(Icons.Default.Edit,"Edit recipe",tint=scheme.primary)}}
             )
         }
     ) { padding ->
@@ -227,6 +328,78 @@ fun RecipeDetailScreen(
                             fontSize = 13.sp
                         )
                     }
+                }
+                item {
+                    Button(
+                        onClick = { shareRecipeImage(recipe, ingredients) },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Share Recipe Image")
+                    }
+                }
+                item {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { shareText(recipe, ingredients) },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Share, null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Share")
+                        }
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    val bytes = withContext(Dispatchers.IO) { buildRecipePdf(recipe, ingredients) }
+                                    exportBytes = bytes
+                                    pdfSaveLauncher.launch("${recipe.recipeName.replace(Regex("[^A-Za-z0-9_-]"), "_")}.pdf")
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.PictureAsPdf, null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Save PDF")
+                        }
+                    }
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    val bytes = withContext(Dispatchers.IO) { recipeText(recipe, ingredients).toByteArray(Charsets.UTF_8) }
+                                    exportBytes = bytes
+                                    textSaveLauncher.launch("${recipe.recipeName.replace(Regex("[^A-Za-z0-9_-]"), "_")}.txt")
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.FileDownload, null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Save TXT")
+                        }
+                        OutlinedButton(
+                            onClick = { sharePdf(recipe, ingredients) },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.PictureAsPdf, null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Share PDF")
+                        }
+                    }
+                    Text(
+                        "Sharing options depend on which apps are installed and support the selected format.",
+                        modifier = Modifier.padding(horizontal = 20.dp),
+                        color = scheme.onSurfaceVariant,
+                        fontSize = 11.sp
+                    )
                 }
             }
         }

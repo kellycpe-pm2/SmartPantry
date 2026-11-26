@@ -33,7 +33,19 @@ private val LightColors = lightColorScheme(
     onSecondaryContainer = LightPrimary,
     surfaceContainer = LightCard,        // nav bar
     surfaceContainerHigh = LightCard,    // dialogs
-    surfaceContainerHighest = LightCard
+    surfaceContainerHighest = LightCard,
+    surfaceContainerLow = LightCard,
+    surfaceContainerLowest = LightBackground,
+    surfaceBright = LightBackground,
+    surfaceDim = LightCard,
+    surfaceTint = LightPrimary,
+    tertiary = LightPrimary,
+    onTertiary = LightOnPrimary,
+    tertiaryContainer = LightPrimaryContainer,
+    onTertiaryContainer = LightText,
+    inversePrimary = LightPrimaryContainer,
+    inverseSurface = LightText,
+    inverseOnSurface = LightBackground
 )
 
 private val DarkColors = darkColorScheme(
@@ -62,7 +74,19 @@ private val DarkColors = darkColorScheme(
     onSecondaryContainer = DarkPrimary,
     surfaceContainer = DarkCard,
     surfaceContainerHigh = DarkCard,
-    surfaceContainerHighest = DarkCard
+    surfaceContainerHighest = DarkCard,
+    surfaceContainerLow = DarkCard,
+    surfaceContainerLowest = DarkBackground,
+    surfaceBright = DarkCard,
+    surfaceDim = DarkBackground,
+    surfaceTint = DarkPrimary,
+    tertiary = DarkPrimary,
+    onTertiary = DarkOnPrimary,
+    tertiaryContainer = DarkPrimaryContainer,
+    onTertiaryContainer = DarkText,
+    inversePrimary = DarkPrimaryContainer,
+    inverseSurface = DarkText,
+    inverseOnSurface = DarkBackground
 )
 
 @Composable
