@@ -77,6 +77,9 @@ private data class RecipeActionTarget(
 @Composable
 fun CommunityScreen(
     initialPostId: Long = 0L,
+    initialSearch: String = "",
+    initialComments: Boolean = false,
+    initialCommentId: Long = 0,
     initialSaved: Boolean = false,
     initialMine: Boolean = false,
     startCreate: Boolean = false,
@@ -115,7 +118,7 @@ fun CommunityScreen(
         mutableStateOf(
             when {
                 startCreate -> "editor"
-                initialPostId > 0L -> "detail"
+                initialPostId > 0L -> if(initialComments)"reviews" else "detail"
                 else -> "home"
             }
         )
@@ -123,7 +126,7 @@ fun CommunityScreen(
     var postId by rememberSaveable { mutableLongStateOf(initialPostId) }
     var selectedLocalRecipeId by rememberSaveable { mutableLongStateOf(0L) }
 
-    var search by rememberSaveable { mutableStateOf("") }
+    var search by rememberSaveable { mutableStateOf(initialSearch) }
     var category by rememberSaveable { mutableStateOf("All") }
     var filterSettings by rememberSaveable { mutableStateOf("{}") }
     var mineCategory by rememberSaveable { mutableStateOf("All") }
@@ -134,6 +137,7 @@ fun CommunityScreen(
     var dialog by rememberSaveable { mutableStateOf("") }
     var dialogId by rememberSaveable { mutableLongStateOf(0L) }
     var dialogTitle by rememberSaveable { mutableStateOf("") }
+    var exportDetails by remember { mutableStateOf(false) }
     var caption by rememberSaveable { mutableStateOf("") }
     var editingCaption by rememberSaveable { mutableStateOf(false) }
     var requestId by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
@@ -261,7 +265,7 @@ fun CommunityScreen(
         Column(Modifier.fillMaxSize()) {
             SmartPantrySectionHeader(
                 title = when (screen) {
-                    "detail" -> "Recipe details"
+                    "detail", "personal_detail" -> "Recipe details"
                     "reviews" -> "Reviews"
                     "editor" -> if (draft.recipeId > 0) "Edit recipe" else "Create recipe"
                     else -> when (activeFilter) {
@@ -271,9 +275,21 @@ fun CommunityScreen(
                         else -> "Community recipes"
                     }
                 },
-                showBack = screen != "home" || initialSaved || initialMine || initialPostId > 0L || startCreate,
+                showBack = activeFilter!="post" || screen != "home" || initialSaved || initialMine || initialPostId > 0L || startCreate,
                 onBack = back,
-                action = null
+                action = {
+                    if(screen=="home" && activeFilter=="post") {
+                        IconButton(onClick={activeFilter="saved";search="";category="All";filterSettings="{}"}){Icon(Icons.Default.BookmarkBorder,"Favourites")}
+                        IconButton(onClick={activeFilter="personal";search="";category="All";filterSettings="{}"}){Icon(Icons.Default.FolderOpen,"My recipes")}
+                    }
+                    if(screen=="detail" && detail!=null) {
+                        val p=detail!!.get("post")!!.jsonObject
+                        IconButton(onClick={vm.action("favourite",postId,buildJsonObject{put("enabled",!p.flag("favourite"))})},enabled=!busy){Icon(if(p.flag("favourite"))Icons.Default.Bookmark else Icons.Default.BookmarkBorder,"Favourite")}
+                        IconButton(onClick={exportDetails=true}){Icon(Icons.Default.Share,"Share recipe")}
+                        if(p.str("owner")==vm.userId)IconButton(onClick={vm.openDraft(p.long("recipeId")){screen="editor"}},enabled=!busy){Icon(Icons.Default.Edit,"Edit recipe")}
+                    }
+                    if(screen=="personal_detail")IconButton(onClick={screen="editor"}){Icon(Icons.Default.Edit,"Edit recipe")}
+                }
             )
             if (loading && !root) LinearProgressIndicator(Modifier.fillMaxWidth())
             Crossfade(
@@ -287,7 +303,7 @@ fun CommunityScreen(
                         vm=vm,mode=activeFilter,search=search,onSearch={search=it},category=category,onCategory={category=it;filterSettings="{}"},
                         filters=Json.parseToJsonElement(filterSettings).jsonObject,
                         onFilters={ filterSettings=it.toString();category="All" },
-                        onMode={activeFilter=it;search=""},onOpenPost=openPost,
+                        onMode={activeFilter=it;search="";category="All";filterSettings="{}"},onOpenPost=openPost,
                         onOpenPersonal={id->vm.openDraft(id){screen="personal_detail"}},onEditPost={row->dialogId=row.long("id");dialogTitle=row.str("title");caption=row.str("caption");editingCaption=true;dialog="publish"},
                         onEditRecipe={row->vm.openDraft(row.long("recipeId")){screen="editor"}},
                         onRemovePost={row->dialogId=row.long("id");dialogTitle=row.str("title");dialog="unpublish"},
@@ -299,15 +315,14 @@ fun CommunityScreen(
                     "personal_detail" -> LocalRecipeDetails(
                         recipe=Recipe(recipeId=draft.recipeId,recipeName=draft.title,recipeCategory=draft.category,isVegan=draft.vegan,
                           description=draft.description,cookingSteps=draft.steps,recipeImage=draft.image,userId=vm.userId),
-                        matchInfo=null,busy=busy,modifier=Modifier.fillMaxSize(),onEdit={screen="editor"},
+                        matchInfo=null,busy=busy,modifier=Modifier.fillMaxSize(),ingredients=draft.ingredients,onEdit={screen="editor"},
                         onPublish={publish(draft.recipeId,draft.title)},onShoppingList=onShoppingList
                     )
                     "editor" -> RecipeEditor(
                         vm = vm,
                         modifier = Modifier.fillMaxSize(),
-                        onSaved = { id ->
-                            recipeVm.refreshRecipes()
-                            publish(id, draft.title)
+                        onSaved = { _ ->
+                            recipeVm.refreshRecipes(); activeFilter="personal";search="";screen="home";vm.feed()
                         }
                     )
 
@@ -367,7 +382,7 @@ fun CommunityScreen(
                         }
                     }
 
-                    "reviews" -> detail?.let { RecipeReviews(it, vm, Modifier.fillMaxSize()) }
+                    "reviews" -> detail?.let { RecipeReviews(it, vm, Modifier.fillMaxSize(),initialCommentId) }
                 }
             }
         }
@@ -567,6 +582,7 @@ fun CommunityScreen(
         )
     }
 
+    if(exportDetails && detail!=null)CommunityExportMenu(detail!!){exportDetails=false}
     when (dialog) {
         "resume" -> AlertDialog(
             onDismissRequest = { dialog = "" },
@@ -669,131 +685,29 @@ fun CommunityScreen(
 
 @Composable
 private fun LocalRecipeDetails(
-    recipe: Recipe,
-    matchInfo: RecommendedRecipeResult?,
-    busy: Boolean,
-    modifier: Modifier = Modifier,
-    onEdit: () -> Unit,
-    onPublish: () -> Unit,
-    onShoppingList: () -> Unit
+ recipe:Recipe,matchInfo:RecommendedRecipeResult?,busy:Boolean,modifier:Modifier=Modifier,
+ ingredients:List<DraftIngredient> = emptyList(),onEdit:()->Unit,onPublish:()->Unit,onShoppingList:()->Unit
 ) {
-    val c = MaterialTheme.colorScheme
-    val imgUrl = recipe.localRecipeImage?.takeIf { File(it).exists() } ?: recipe.recipeImage.orEmpty()
-
-    Column(modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
-        RecipePhoto(imgUrl, Modifier.fillMaxWidth().height(215.dp))
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(recipe.recipeName, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Surface(shape = RoundedCornerShape(8.dp), color = c.secondaryContainer) {
-                            Text(
-                                "Personal recipe",
-                                Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = c.onSecondaryContainer
-                            )
-                        }
-                        recipe.recipeCategory?.takeIf { it.isNotBlank() }?.let {
-                            Surface(shape = RoundedCornerShape(8.dp), color = c.primaryContainer) {
-                                Text(
-                                    it,
-                                    Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = c.onPrimaryContainer
-                                )
-                            }
-                        }
-                        if (recipe.isVegan) {
-                            Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFFE4F4EA)) {
-                                Text(
-                                    "🌱 Vegan",
-                                    Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFF216B43)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (!recipe.description.isNullOrBlank()) {
-                ReadableText(recipe.description!!)
-            }
-
-            if (matchInfo != null && matchInfo.totalIngredients > 0) {
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = c.surfaceVariant,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(
-                            "Pantry readiness: ${matchInfo.matchingCount}/${matchInfo.totalIngredients} ingredients ready",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        if (matchInfo.missingIngredients.isNotEmpty()) {
-                            Text(
-                                "Missing: ${matchInfo.missingIngredients.joinToString(", ")}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = c.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
-
-            HorizontalDivider(color = c.outlineVariant)
-
-            Text("Cooking steps", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            if (recipe.cookingSteps.isEmpty()) {
-                Text("No cooking steps added yet.", style = MaterialTheme.typography.bodyMedium, color = c.onSurfaceVariant)
-            } else {
-                recipe.cookingSteps.forEachIndexed { index, step ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Box(
-                            Modifier
-                                .size(30.dp)
-                                .background(c.primaryContainer, CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) { Text("${index + 1}", fontWeight = FontWeight.Bold, color = c.primary) }
-                        Column(Modifier.weight(1f)) { ReadableText(step) }
-                    }
-                }
-            }
-
-            HorizontalDivider(color = c.outlineVariant)
-
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                FilledTonalButton(
-                    onClick = onPublish,
-                    enabled = !busy,
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Default.Public, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Publish")
-                }
-                OutlinedButton(
-                    onClick = onEdit,
-                    enabled = !busy,
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Default.Edit, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Edit recipe")
-                }
-            }
-            TextButton(onClick = onShoppingList, modifier = Modifier.align(Alignment.End)) {
-                Text("Open shopping list →")
-            }
-        }
-    }
+ val c=MaterialTheme.colorScheme;var allSteps by rememberSaveable{mutableStateOf(false)}
+ Column(modifier.verticalScroll(rememberScrollState()).padding(bottom=24.dp)){
+  RecipePhoto(recipe.localRecipeImage?.takeIf{File(it).exists()}?:recipe.recipeImage.orEmpty(),Modifier.fillMaxWidth().height(215.dp))
+  Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
+   Row(verticalAlignment=Alignment.CenterVertically){Text(recipe.recipeName,Modifier.weight(1f),style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text("by You",color=c.onSurfaceVariant)}
+   Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){RatingSummary(0.0,0);Text("Private recipe",style=MaterialTheme.typography.labelMedium,color=c.onSurfaceVariant)}
+   if(!recipe.description.isNullOrBlank())ReadableText(recipe.description!!)
+   Text("Ingredients",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
+   ingredients.forEach{row->Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+    RecipePhoto(row.image.ifBlank{row.name.lowercase()},Modifier.size(34.dp).clip(CircleShape),false)
+    Text(row.name,Modifier.weight(1f));Text("${row.quantity} ${row.unit}",style=MaterialTheme.typography.bodySmall)
+   }}
+   Text("Cooking steps",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
+   (if(allSteps)recipe.cookingSteps else recipe.cookingSteps.take(3)).forEachIndexed{index,step->Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){
+    Surface(shape=CircleShape,color=c.primaryContainer){Text("${index+1}",Modifier.padding(8.dp),color=c.primary)}
+    Column(Modifier.weight(1f)){ReadableText(step)}
+   }}
+   if(recipe.cookingSteps.size>3)TextButton(onClick={allSteps=!allSteps}){Text(if(allSteps)"Show fewer steps" else "Show all ${recipe.cookingSteps.size} steps")}
+  }
+ }
 }
 
 @Composable
@@ -804,52 +718,15 @@ internal fun SmartPantrySectionHeader(
     action: @Composable (() -> Unit)? = null
 ) {
     val c = MaterialTheme.colorScheme
-    var lastBackClickTime by remember { mutableLongStateOf(0L) }
     Column {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(60.dp)
-                .background(c.background)
-        ) {
-            androidx.compose.foundation.Image(
-                painter = androidx.compose.ui.res.painterResource(com.example.smartpantry.R.drawable.smartpantry_logo_horizontal),
-                contentDescription = "SmartPantry",
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .width(200.dp)
-                    .height(46.dp),
-                contentScale = ContentScale.Fit
-            )
-            if (showBack) onBack?.let {
-                IconButton(
-                    onClick = {
-                        val now = System.currentTimeMillis()
-                        if (now - lastBackClickTime > 500L) {
-                            lastBackClickTime = now
-                            it()
-                        }
-                    },
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(start = 8.dp)
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                }
-            }
-            Row(
-                Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(end = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) { action?.invoke() }
+        Box(Modifier.fillMaxWidth().height(46.dp),contentAlignment=Alignment.Center) {
+            androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(com.example.smartpantry.R.drawable.smartpantry_logo_horizontal),"SmartPantry",Modifier.width(190.dp).height(38.dp),contentScale=ContentScale.Fit)
         }
-        if(title.isNotBlank()) Text(
-            title,
-            Modifier.padding(start = 18.dp, end = 18.dp, top = 17.dp, bottom = 7.dp),
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold
-        )
+        if(title.isNotBlank()) Row(Modifier.fillMaxWidth().padding(start=if(showBack)4.dp else 18.dp,end=6.dp,bottom=4.dp),verticalAlignment=Alignment.CenterVertically) {
+            if(showBack && onBack!=null) IconButton(onClick=onBack){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")}
+            Text(title,Modifier.weight(1f),style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,maxLines=2)
+            Row(verticalAlignment=Alignment.CenterVertically){action?.invoke()}
+        }
     }
 }
 
@@ -911,7 +788,7 @@ private fun RatingSummary(rating: Double, count: Long) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Icon(Icons.Default.Star, null, tint = Color(0xFFF5B921), modifier = Modifier.size(18.dp))
         Text(
-            if (count == 0L) "No ratings yet" else String.format(java.util.Locale.US, "%.1f", rating) + " ($count)",
+            String.format(java.util.Locale.US, "%.1f (%d)", if(count==0L)0.0 else rating, count),
             style = MaterialTheme.typography.labelLarge
         )
     }
@@ -1023,40 +900,13 @@ private fun RecipeDetails(
 ) {
     val c = MaterialTheme.colorScheme
     val post = data["post"]!!.jsonObject
-    var export by rememberSaveable { mutableStateOf(false) }
+    var allSteps by rememberSaveable { mutableStateOf(false) }
     Column(modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
-        if(post.str("owner")==userId) Row(Modifier.fillMaxWidth().padding(horizontal=12.dp),horizontalArrangement=Arrangement.End) {
-            IconButton(onClick={onCaption(post)},enabled=!busy){Icon(Icons.Default.Edit,"Edit post")}
-            var menu by remember { mutableStateOf(false) }
-            Box { IconButton(onClick={menu=true}){Icon(Icons.Default.MoreVert,"Post options")}
-                DropdownMenu(expanded=menu,onDismissRequest={menu=false}) {
-                    DropdownMenuItem(text={Text("Edit recipe")},onClick={menu=false;onEdit(post)})
-                    DropdownMenuItem(text={Text("Remove post")},onClick={menu=false;onUnpublish(post)},leadingIcon={Icon(Icons.Default.DeleteOutline,null)})
-                }
-            }
-        }
         RecipePhoto(post.str("image"), Modifier.fillMaxWidth().height(215.dp))
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
-                Column(Modifier.weight(1f)) {
-                    Text(post.str("title"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text(
-                        "by ${post.str("author")}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = c.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
-                IconButton(onClick = { onFavourite(post) }, enabled = !busy) {
-                    Icon(
-                        if (post.flag("favourite")) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                        "Save recipe",
-                        tint = c.primary
-                    )
-                }
-                IconButton(onClick = { export = true }) {
-                    Icon(Icons.Default.Share, "Share and export", tint = c.primary)
-                }
+            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+                Text(post.str("title"),Modifier.weight(1f),style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold)
+                Text("by ${post.str("author")}",style=MaterialTheme.typography.bodyMedium,color=c.onSurfaceVariant)
             }
             Row(
                 Modifier
@@ -1068,8 +918,8 @@ private fun RecipeDetails(
                 RatingSummary(post.number("rating"), post.long("ratingCount"))
                 Text("${post.long("commentCount")} comments ›", color = c.primary, style = MaterialTheme.typography.labelLarge)
             }
-            if (post.str("caption").isNotBlank()) ReadableText(post.str("caption"))
-            if (post.str("description").isNotBlank()) ReadableText(post.str("description"))
+            val description=post.str("description").ifBlank{post.str("caption")}
+            if(description.isNotBlank())ReadableText(description)
             HorizontalDivider(color = c.outlineVariant)
             Text("Ingredients", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             data.rows("ingredients").forEach { row ->
@@ -1079,7 +929,7 @@ private fun RecipeDetails(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("•", color = c.primary)
+                    RecipePhoto(row.str("image").ifBlank{row.str("name").lowercase()},Modifier.size(32.dp).clip(CircleShape),false)
                     Text(row.str("name"), Modifier.weight(1f), fontWeight = FontWeight.Medium)
                     Text("${quantityText(row.number("quantity"))} ${row.str("unit")}", style = MaterialTheme.typography.bodySmall)
                     Surface(
@@ -1108,11 +958,9 @@ private fun RecipeDetails(
                 Spacer(Modifier.width(8.dp))
                 Text("Add missing ingredients")
             }
-            TextButton(onClick = onShoppingList, modifier = Modifier.align(Alignment.End)) {
-                Text("Open shopping list →")
-            }
             Text("Cooking steps", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            data.words("steps").forEachIndexed { index, step ->
+            val steps=data.words("steps")
+            (if(allSteps)steps else steps.take(3)).forEachIndexed { index, step ->
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Box(
                         Modifier
@@ -1123,15 +971,9 @@ private fun RecipeDetails(
                     Column(Modifier.weight(1f)) { ReadableText(step) }
                 }
             }
-            OutlinedButton(onClick = onReviews, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
-                Icon(Icons.Default.ChatBubbleOutline, null)
-                Spacer(Modifier.width(8.dp))
-                Text("View reviews (${post.long("commentCount")})")
-            }
-
+            if(steps.size>3)TextButton(onClick={allSteps=!allSteps},modifier=Modifier.fillMaxWidth()){Text(if(allSteps)"Show fewer steps" else "Show all ${steps.size} steps")}
         }
     }
-    if (export) CommunityExportMenu(data) { export = false }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1153,6 +995,8 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, onSaved: (L
     var ingredientImage by rememberSaveable { mutableStateOf("") }
     var editingIngredient by rememberSaveable { mutableIntStateOf(-1) }
     var fieldError by rememberSaveable { mutableStateOf("") }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var confirmHide by remember { mutableStateOf(false) }
     var photos by rememberSaveable { mutableStateOf(false) }
     var cameraUri by rememberSaveable { mutableStateOf("") }
     var photoError by rememberSaveable { mutableStateOf("") }
@@ -1221,13 +1065,17 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, onSaved: (L
             maxLines = 5,
             shape = RoundedCornerShape(12.dp)
         )
-        UnitDropdown("Cuisine",draft.cuisine.ifBlank { "Unspecified" },listOf("Unspecified","Malaysian","Chinese","Asian","Western","Other")) {
+        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)){Text("Publish to community",fontWeight=FontWeight.SemiBold);Text(if(draft.publish)"Visible to other users" else "Only visible in My recipes",style=MaterialTheme.typography.bodySmall,color=c.onSurfaceVariant)}
+            Switch(checked=draft.publish,onCheckedChange={vm.editDraft(draft.copy(publish=it))},enabled=!busy)
+        }
+        UnitDropdown("Cuisine",draft.cuisine.ifBlank { "Unspecified" },listOf("Unspecified","Malaysian","Malay","Chinese","Indian","Asian","Western")) {
             vm.editDraft(draft.copy(cuisine=if(it=="Unspecified")"" else it,category=if(it=="Unspecified")"Unspecified" else it))
         }
-        UnitDropdown("Dish type",draft.dishType.ifBlank { "Unspecified" },listOf("Unspecified","Rice dishes","Noodles","Light meals","Desserts","Other")) {
+        UnitDropdown("Dish type",draft.dishType.ifBlank { "Unspecified" },listOf("Unspecified","Rice dishes","Noodles","Light meals","Desserts")) {
             vm.editDraft(draft.copy(dishType=if(it=="Unspecified")"" else it))
         }
-        UnitDropdown("Dietary preference",if(draft.vegan)"Vegan" else draft.dietary,listOf("Unspecified","Vegetarian","Vegan")) {
+        UnitDropdown("Dietary preference",if(draft.vegan)"Vegan" else draft.dietary,listOf("Unspecified","Halal","Vegetarian","Vegan")) {
             vm.editDraft(draft.copy(dietary=it,vegan=it=="Vegan"))
         }
         Row(
@@ -1310,19 +1158,22 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, onSaved: (L
             shape = RoundedCornerShape(12.dp)
         ) { Icon(Icons.Default.Add, null); Text("Add step") }
         Button(
-            onClick = { vm.saveDraft(onSaved) },
+            onClick = { if(draft.wasPublished && !draft.publish)confirmHide=true else vm.saveDraft(onSaved) },
             enabled = !busy,
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 52.dp),
             shape = RoundedCornerShape(14.dp)
-        ) { Text("Save & continue", fontWeight = FontWeight.Bold) }
+        ) { Text(if(draft.recipeId>0)"Save changes" else if(draft.publish)"Publish recipe" else "Save recipe", fontWeight = FontWeight.Bold) }
+        if(draft.recipeId>0) TextButton(onClick={confirmDelete=true},enabled=!busy,modifier=Modifier.fillMaxWidth()){Icon(Icons.Default.DeleteOutline,null);Text("Delete recipe",color=c.error)}
         Text(
-            "Save your recipe first, then confirm publication. “Not now” keeps it in Personal.",
+            if(draft.publish)"Your recipe will be visible in the community." else "Your recipe is private until you publish it.",
             style = MaterialTheme.typography.bodySmall,
             color = c.onSurfaceVariant
         )
     }
+    if(confirmHide)AlertDialog(onDismissRequest={confirmHide=false},title={Text("Hide recipe from community?")},text={Text("It will remain in My recipes. Existing comments, ratings and favourites are kept.")},confirmButton={TextButton(onClick={confirmHide=false;vm.saveDraft(onSaved)}){Text("Hide recipe")}},dismissButton={TextButton(onClick={confirmHide=false}){Text("Cancel")}})
+    if(confirmDelete)AlertDialog(onDismissRequest={confirmDelete=false},title={Text("Delete recipe permanently?")},text={Text("This also deletes its community post, comments, ratings and favourites. This cannot be undone.")},confirmButton={TextButton(onClick={confirmDelete=false;vm.deletePersonal(draft.recipeId){onSaved(0)}}){Text("Delete",color=c.error)}},dismissButton={TextButton(onClick={confirmDelete=false}){Text("Cancel")}})
     if (helperVisible) ModalBottomSheet(onDismissRequest = { if (!busy) helperVisible = false }) {
         Column(
             Modifier
@@ -1550,7 +1401,7 @@ private fun UnitDropdown(label: String, value: String, options: List<String>, on
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RecipeReviews(data: JsonObject, vm: CommunityViewModel, modifier: Modifier) {
+private fun RecipeReviews(data: JsonObject, vm: CommunityViewModel, modifier: Modifier,focusCommentId:Long=0) {
     val post = data["post"]!!.jsonObject
     val busy by vm.busy.collectAsState()
     val c = MaterialTheme.colorScheme
@@ -1561,8 +1412,13 @@ private fun RecipeReviews(data: JsonObject, vm: CommunityViewModel, modifier: Mo
     var commentRequest by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
     var deleteId by rememberSaveable { mutableLongStateOf(0) }
     val myRating = data.long("myRating").toInt()
+    val reviewScroll=rememberLazyListState()
+    LaunchedEffect(focusCommentId,data){
+        val index=data.rows("comments").indexOfFirst{it.long("id")==focusCommentId}
+        if(focusCommentId>0 && index>=0)reviewScroll.animateScrollToItem(index+3)
+    }
     LazyColumn(
-        modifier,
+        modifier,state=reviewScroll,
         contentPadding = PaddingValues(18.dp, 12.dp, 18.dp, 30.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
@@ -1575,7 +1431,7 @@ private fun RecipeReviews(data: JsonObject, vm: CommunityViewModel, modifier: Mo
                 }
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        if (post.long("ratingCount") == 0L) "—" else String.format(java.util.Locale.US, "%.1f", post.number("rating")),
+                        String.format(java.util.Locale.US, "%.1f", post.number("rating")),
                         fontSize = 30.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -1625,7 +1481,7 @@ private fun RecipeReviews(data: JsonObject, vm: CommunityViewModel, modifier: Mo
             EmptyCommunity("Start the conversation", "Share a helpful tip or tell others how your cooking went.", Icons.Default.ChatBubbleOutline)
         }
         items(data.rows("comments"), key = { it.long("id") }) { row ->
-            Surface(shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, c.outlineVariant), color = c.surface) {
+            Surface(shape = RoundedCornerShape(16.dp), border = BorderStroke(if(row.long("id")==focusCommentId)2.dp else 1.dp,if(row.long("id")==focusCommentId)c.primary else c.outlineVariant), color = c.surface) {
                 Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                         Box(
@@ -1758,8 +1614,8 @@ internal fun ReadableText(value: String) {
     Column {
         if (expanded) Box(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState())) {
             Text(text, style = MaterialTheme.typography.bodyMedium)
-        } else Text(text, style = MaterialTheme.typography.bodyMedium, maxLines = 4, overflow = TextOverflow.Ellipsis)
-        if (text.length > 220 || text.count { it == '\n' } >= 4) TextButton(onClick = { expanded = !expanded }) {
+        } else Text(text, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
+        if (text.length > 220 || text.count { it == '\n' } >= 3) TextButton(onClick = { expanded = !expanded }) {
             Text(if (expanded) "Show less" else "Read more")
         }
     }

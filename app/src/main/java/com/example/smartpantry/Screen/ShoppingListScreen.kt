@@ -28,6 +28,7 @@ import java.util.UUID
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.foundation.BorderStroke
@@ -373,26 +374,12 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
                                         ShoppingMetric(toBuy.size,"To buy",Modifier.weight(1f))
                                         ShoppingMetric(purchased.size,"Purchased",Modifier.weight(1f))
                                     }
-                                    TextButton(onClick = { page=ShoppingPage.REVIEW; mutate { load() } },enabled=!busy) {
-                                        Icon(Icons.AutoMirrored.Filled.FactCheck,null,Modifier.size(18.dp)); Spacer(Modifier.width(6.dp))
-                                        Text(if(busy) "Checking pantry…" else "Purchase Review")
-                                    }
-                                    if (!pantryKnown) Text("Pantry stock has not loaded yet. Connect and pull down to retry.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                                    if (pantryKnown && reviewCount > 0) {
-                                        ShoppingPanel(tinted = true) {
-                                            Row(verticalAlignment = Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                                                Icon(Icons.Default.ShoppingBasket,null,tint=MaterialTheme.colorScheme.primary,modifier=Modifier.size(28.dp))
-                                                Column(Modifier.weight(1f)) {
-                                                    Text(reviewCountLabel(reviewCount),
-                                                        style = MaterialTheme.typography.titleMedium,
-                                                        fontWeight = FontWeight.Bold)
-                                                    Text(if(offline || pantryReadFailed) "Based on saved pantry stock" else "Use pantry stock before buying more",
-                                                        style = MaterialTheme.typography.bodySmall)
-                                                }
-                                                TextButton(onClick = { page = ShoppingPage.REVIEW }) {
-                                                    Text("Review →")
-                                                }
-                                            }
+                                    val reviewTone=if(pantryKnown && reviewCount>0)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow
+                                    Surface(modifier=Modifier.fillMaxWidth().clickable(enabled=!busy){page=ShoppingPage.REVIEW;mutate{load()}},shape=RoundedCornerShape(16.dp),color=reviewTone) {
+                                        Row(Modifier.padding(horizontal=14.dp,vertical=12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                                            Icon(Icons.Default.ShoppingBasket,null,tint=MaterialTheme.colorScheme.primary,modifier=Modifier.size(26.dp))
+                                            Text(when {busy->"Checking pantry stock…";!pantryKnown->"Unable to check pantry stock";reviewCount>0->reviewCountLabel(reviewCount);else->"No purchase review"},Modifier.weight(1f),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Bold)
+                                            Icon(Icons.Default.ChevronRight,"Open purchase review",Modifier.size(24.dp))
                                         }
                                     }
                                     Row(
@@ -788,6 +775,7 @@ private fun ShoppingReview(
     val warningBackground=if(colors.background.luminance()<0.5f)Color(0xFF463719) else Color(0xFFFFF4D8)
     val warningText=if(colors.background.luminance()<0.5f)Color(0xFFFFE0A2) else Color(0xFF795410)
 
+    Text("Compare your shopping list with usable pantry stock to avoid buying more than you need.", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
     if(!stockKnown) {
         Text(if(checking) "Checking your pantry…" else "Pantry stock is unavailable. Pull down to retry.")
         return
@@ -796,9 +784,8 @@ private fun ShoppingReview(
         val stamp=if(lastUpdated>0) java.time.format.DateTimeFormatter.ofPattern("d MMM, HH:mm",Locale.ENGLISH).withZone(ZoneId.of("Asia/Kuala_Lumpur")).format(Instant.ofEpochMilli(lastUpdated)) else "your last successful refresh"
         Text("Saved pantry snapshot from $stamp. Latest stock could not be confirmed. Check availability before changing your list.",style=MaterialTheme.typography.bodySmall,color=colors.onSurfaceVariant)
     }
-    Text("Plan for the next 7 days. Use your pantry stock before buying more.", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
     ShoppingPanel(tinted = true) {
-        Text(if(checking) "Checking pantry…" else if (pending.isEmpty()) "No new suggestions" else reviewCountLabel(pending.size),
+        Text(if(checking) "Checking pantry…" else if (pending.isEmpty()) "No purchase review" else reviewCountLabel(pending.size),
             style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
     }
     if(handled.isNotEmpty()) Text("${handled.size} reviewed for this list and pantry snapshot",style=MaterialTheme.typography.bodySmall,color=colors.onSurfaceVariant)
@@ -869,19 +856,7 @@ private fun ShoppingReview(
             }
         }
     }
-    if (unchanged.isNotEmpty()) {
-        FilledTonalButton(
-            onClick = { showUnchanged = !showUnchanged },
-            modifier = Modifier.fillMaxWidth(),
-            shape = shopShape
-        ) {
-            Text("Other items · ${unchanged.size}", Modifier.weight(1f))
-            Text(if (showUnchanged) "↑" else "↓")
-        }
-        if (showUnchanged) unchanged.forEach {
-            Text("${it.item.name} · ${formatQuantity(it.item.quantity)} ${it.item.unit}")
-        }
-    }
+    if(pending.isEmpty() && !checking)Text("No changes are suggested based on your current shopping list and usable pantry stock.",style=MaterialTheme.typography.bodyMedium,color=colors.onSurfaceVariant)
     adjustment?.let { suggestion ->
         val item = suggestion.item
         AlertDialog(

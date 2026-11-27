@@ -3,6 +3,10 @@ package com.example.smartpantry
 import android.Manifest
 import android.os.Build
 import android.os.Bundle
+import android.content.Intent
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -22,6 +26,8 @@ import com.example.smartpantry.ui.theme.SmartPantryTheme
 import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
+    private var externalLink by mutableStateOf("")
+    override fun onNewIntent(intent:Intent){super.onNewIntent(intent);setIntent(intent);externalLink=intent.dataString.orEmpty()}
     //notification setup
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
@@ -37,14 +43,13 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         NotificationHelper.createNotificationChannel(this)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
+        externalLink=intent?.dataString.orEmpty()
+        // Ask for device-notification permission only when the user enables it in settings.
         scheduleExpiryCheckWorker()
 
         setContent {
             SmartPantryTheme {
-                Surface(modifier = Modifier.fillMaxSize()) { AppRoot() }
+                Surface(modifier = Modifier.fillMaxSize()) { AppRoot(externalLink){externalLink=""} }
             }
         }
     }
@@ -53,11 +58,12 @@ class MainActivity : ComponentActivity() {
         // Run an immediate check on app startup for testing
         NotificationHelper.triggerImmediateCheck(this)
 
-        val workRequest = PeriodicWorkRequestBuilder<ExpiryCheckWorker>(24, TimeUnit.HOURS)
+        WorkManager.getInstance(this).cancelUniqueWork("ExpiryCheckWork")
+        val workRequest = PeriodicWorkRequestBuilder<ExpiryCheckWorker>(1, TimeUnit.HOURS)
             .build()
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            "ExpiryCheckWork",
-            ExistingPeriodicWorkPolicy.REPLACE,
+            "SmartPantryNotificationsV6",
+            ExistingPeriodicWorkPolicy.KEEP,
             workRequest
         )
     }

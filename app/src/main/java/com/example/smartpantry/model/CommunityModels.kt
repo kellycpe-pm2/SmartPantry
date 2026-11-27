@@ -28,6 +28,7 @@ internal data class RecipeDraft(
     val description: String = "", val image: String = "", val vegan: Boolean = false, val source: String = "",
     val ingredients: List<DraftIngredient> = emptyList(), val steps: List<String> = listOf(""),
     val requestId: String = UUID.randomUUID().toString(),
+    val publish: Boolean = false, val wasPublished: Boolean = false,
     val cuisine: String = category.takeIf { it in listOf("Malaysian","Chinese","Asian","Western","Other") }.orEmpty(), val dishType: String = "", val dietary: String = "Unspecified"
 ) {
     fun problem(): String? {

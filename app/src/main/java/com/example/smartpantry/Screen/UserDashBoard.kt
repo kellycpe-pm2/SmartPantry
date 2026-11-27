@@ -1,6 +1,14 @@
 package com.example.smartpantry.ui.home
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -44,30 +52,47 @@ fun UserDashboardScreen(onOpenCommunityPost:(Long)->Unit={},onShoppingList:()->U
  Box(Modifier.fillMaxSize()) {
   PullToRefreshBox(isRefreshing=loading,onRefresh={vm.refresh()}) {
    LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(20.dp,10.dp,20.dp,158.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
-    item { SmartPantrySectionHeader("",false,null);Text(if(userName.isBlank())"Welcome back" else "Hi, ${userName.substringBefore(' ')}",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text("Make the most of what you have.",color=c.onSurfaceVariant,style=MaterialTheme.typography.bodyMedium) }
+    item { SmartPantrySectionHeader("",false,null) }
     message?.let { item {Text(it,color=c.error,style=MaterialTheme.typography.bodySmall)} }
-    item { Surface(Modifier.fillMaxWidth().clickable(onClick=onRecords),shape=RoundedCornerShape(22.dp),color=c.primaryContainer) {
-     Box { Image(painterResource(R.drawable.home_vegetables),null,Modifier.align(Alignment.BottomEnd).width(110.dp))
-      Column(Modifier.fillMaxWidth().padding(start=16.dp,end=112.dp,top=16.dp,bottom=16.dp),verticalArrangement=Arrangement.spacedBy(5.dp)) {
-       Text("Waste this week",fontWeight=FontWeight.Bold)
-       Text(if(data.isEmpty())"—" else data.rows("weekWaste").joinToString(" · "){displayAmount(it.number("quantity"),it.str("unit"))}.ifBlank{"No waste recorded"},style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=c.primary)
-       Text(if(data.isEmpty())"${if(loading)"Loading" else "Unable to load"} records" else "${data.long("weekCount")} waste records",style=MaterialTheme.typography.bodySmall)
-       Text("View waste log →",style=MaterialTheme.typography.labelLarge,color=c.primary)
+    item { Surface(Modifier.fillMaxWidth().clickable(onClick=onRecords),shape=RoundedCornerShape(22.dp)) {
+     Box(Modifier.fillMaxWidth().heightIn(min=164.dp).background(Brush.horizontalGradient(listOf(Color(0xFF235F62),Color(0xFF73CBC7))))) {
+      Image(painterResource(R.drawable.home_vegetables),null,Modifier.align(Alignment.TopEnd).width(154.dp).height(168.dp),contentScale=ContentScale.Crop)
+      Column(Modifier.padding(start=18.dp,end=148.dp,top=18.dp,bottom=18.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+       Text("This week",color=Color.White,style=MaterialTheme.typography.labelLarge)
+       Text("Waste rate",fontWeight=FontWeight.Bold,color=Color.White)
+       Text(String.format(java.util.Locale.US,"%.1f%%",data.number("wasteRate")),style=MaterialTheme.typography.headlineLarge,fontWeight=FontWeight.Bold,color=Color.White)
+       Text("Of recorded food entries",color=Color.White.copy(alpha=.9f),style=MaterialTheme.typography.labelSmall)
       }
      }
     } }
-    item { DashboardRow(Icons.Default.Inventory2,if(data.isEmpty())"Pantry overview" else "${pantry.map{it.long("ingredientId")}.filter{it>0}.distinct().size} ingredients · ${pantry.size} batches","View pantry",onPantry) }
-    item { Row(verticalAlignment=Alignment.CenterVertically){Text("Use these first",Modifier.weight(1f),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold);TextButton(onClick=onPantry){Text("See all")}} }
-    if(soon.isEmpty())item { Text(if(data.isEmpty())"Pantry stock has not loaded yet. Pull down to retry." else "No available stock expires within the next 3 days.",style=MaterialTheme.typography.bodyMedium,color=c.onSurfaceVariant) }
-    items(soon,key={it.long("id")}) { row->Surface(Modifier.fillMaxWidth().clickable {onPantryBatch(row.long("ingredientId"),row.long("id"))},shape=RoundedCornerShape(16.dp),border=BorderStroke(1.dp,c.outlineVariant),color=c.surface) {
-     Row(Modifier.padding(12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-      RecipePhoto(row.str("image").ifBlank { row.str("name").lowercase() },Modifier.size(50.dp),false)
-      Column(Modifier.weight(1f)) { Text(row.str("name","Ingredient"),fontWeight=FontWeight.Bold);Text(displayAmount(row.number("quantity"),row.str("unit")),style=MaterialTheme.typography.bodyMedium)
-       val days=java.time.temporal.ChronoUnit.DAYS.between(today,LocalDate.parse(row.str("expiry")))
-       Text(when(days){0L->"Expires today";1L->"Expires tomorrow";else->"Expires in $days days"},color=if(days<=1)c.error else c.primary,style=MaterialTheme.typography.labelMedium)
-      };Icon(Icons.Default.ChevronRight,"View pantry batches")
+    item { Surface(Modifier.fillMaxWidth().clickable(onClick=onPantry),shape=RoundedCornerShape(12.dp),color=c.surfaceContainerLow) {
+     Row(Modifier.padding(horizontal=12.dp,vertical=6.dp).heightIn(min=36.dp),verticalAlignment=Alignment.CenterVertically) {
+      Text(if(data.isEmpty())"Pantry stock unavailable" else "${pantry.map{it.long("ingredientId")}.filter{it>0}.distinct().size} ingredients · ${pantry.size} batches",Modifier.weight(1f),style=MaterialTheme.typography.labelLarge)
+      Icon(Icons.Default.ChevronRight,"View pantry",Modifier.size(24.dp),tint=c.primary)
      }
     } }
+    item { Row(verticalAlignment=Alignment.CenterVertically){Text("Use these first",Modifier.weight(1f),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold);TextButton(onClick=onPantry){Text("See all");Icon(Icons.Default.ChevronRight,null,Modifier.size(24.dp))}} }
+    if(soon.isEmpty())item { Text(if(data.isEmpty())"Pantry stock has not loaded yet. Pull down to retry." else "No available stock expires within the next 3 days.",style=MaterialTheme.typography.bodyMedium,color=c.onSurfaceVariant) }
+    if(soon.isNotEmpty())item {
+     Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+      soon.forEach { row->Surface(Modifier.width(224.dp).clickable {onPantryBatch(row.long("ingredientId"),row.long("id"))},shape=RoundedCornerShape(18.dp),border=BorderStroke(1.dp,c.outlineVariant),color=c.surface) {
+       Column(Modifier.padding(10.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(9.dp)) {
+         RecipePhoto(row.str("image").ifBlank{row.str("name").lowercase()},Modifier.size(42.dp).clip(CircleShape),false)
+         Text(row.str("name","Ingredient"),maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,fontWeight=FontWeight.Bold)
+        }
+        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)) {
+         Text(displayAmount(row.number("quantity"),row.str("unit"))+" ·",style=MaterialTheme.typography.labelSmall)
+         val days=java.time.temporal.ChronoUnit.DAYS.between(today,LocalDate.parse(row.str("expiry")))
+         Surface(shape=RoundedCornerShape(6.dp),color=Color(0xFFFFF1BA)) {
+          Text(when(days){0L->"Expires today";1L->"Expires tomorrow";else->"Expires in $days days"},Modifier.padding(4.dp,2.dp),color=Color(0xFF76520C),style=MaterialTheme.typography.labelSmall)
+         }
+        }
+       }
+      } }
+     }
+    }
+    item { Spacer(Modifier.height(3.dp));HorizontalDivider(color=c.outlineVariant);Spacer(Modifier.height(5.dp)) }
     item { DashboardRow(Icons.Default.ShoppingCart,"Shopping list",if(data.isEmpty())"Open your list" else "${data.long("toBuy")} to buy · ${data.long("purchased")} purchased",onShoppingList) }
     item { CommunityDiscover(onOpenCommunityPost,onRecipes) }
    }

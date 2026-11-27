@@ -147,7 +147,7 @@ internal class ShoppingRepository(
         checkOwner(); mutex.withLock { flushLocked(force=force) }
     }
     private suspend fun flushLocked(onlyId: Long? = null, force: Boolean = false) {
-        if(!force && !connected()) { offline=true;syncStatus="Offline. Your changes are saved on this device.";return }
+        if(!force && !connected()) { offline=true;syncStatus="Offline. Your changes are saved on this device.";if(pendingCount>0)com.example.smartpantry.notifications.NotificationRepository(app).recordSyncIssue();return }
         val attempted=mutableSetOf<Long>()
         val failed=mutableListOf<String>()
         var synced=0
@@ -186,6 +186,7 @@ internal class ShoppingRepository(
             pendingCount==0 -> if(synced>0) "$synced change(s) synced successfully." else "Your shopping list is up to date."
             else -> "$synced synced · $pendingCount other change(s) still pending."
         }
+        if(failed.isNotEmpty())com.example.smartpantry.notifications.NotificationRepository(app).recordSyncIssue()
         if(onlyId!=null && failed.isNotEmpty())throw IllegalStateException(syncStatus)
     }
     private suspend fun remoteSave(item: RemoteShoppingItem,name: String,requestId: String): RemoteShoppingItem {

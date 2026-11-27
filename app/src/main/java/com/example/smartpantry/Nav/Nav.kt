@@ -14,6 +14,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
+import com.example.smartpantry.notifications.NotificationRepository
+import com.example.smartpantry.notifications.NotificationBadge
+import com.example.smartpantry.notifications.NotificationScreen
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.example.smartpantry.community.CommunityScreen
 import androidx.compose.ui.Alignment
@@ -77,7 +81,9 @@ data class BottomNavItem(
 @Composable
 fun AppNavHost(
     startRoute: String,
-    navController: NavHostController = rememberNavController()
+    navController: NavHostController = rememberNavController(),
+    externalLink: String = "",
+    onLinkHandled: () -> Unit = {}
 ) {
     val items = listOf(
         BottomNavItem(
@@ -141,6 +147,23 @@ fun AppNavHost(
         }
     }
 
+    val appContext=LocalContext.current
+    val owner=supabase.auth.currentUserOrNull()?.id
+    LaunchedEffect(owner,currentRoute){
+        NotificationBadge.count.value=0
+        if(owner!=null){try{NotificationRepository(appContext).call()}catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled}catch(_:Exception){}}
+    }
+    LaunchedEffect(externalLink,sessionStatus){
+        if(externalLink.isNotBlank() && sessionStatus is SessionStatus.Authenticated){
+            val uri=android.net.Uri.parse(externalLink)
+            when(uri.host){
+                "recipe"->uri.lastPathSegment?.toLongOrNull()?.takeIf{it>0}?.let{navController.navigate("community_post/$it")}
+                "notifications"->navController.navigate("notifications")
+                "batch"->{val parts=uri.pathSegments;val ing=parts.getOrNull(0)?.toLongOrNull();val batch=parts.getOrNull(1)?.toLongOrNull();if(ing!=null&&batch!=null)navController.navigate("ingredient_detail/$ing?batchId=$batch")}
+            }
+            onLinkHandled()
+        }
+    }
     Box(Modifier.fillMaxSize()) {
         NavHost(
             navController = navController,
@@ -349,6 +372,22 @@ fun AppNavHost(
                 }
             }
 
+            composable("notifications") {
+                NotificationScreen(onBack={navController.popBackStack()},
+                    onPost={post,comment->navController.navigate("notification_post/$post?comment=$comment")},
+                    onBatch={ingredient,batch->navController.navigate("ingredient_detail/$ingredient?batchId=$batch")},
+                    onRecipes={query->navController.navigate("recipe_search?query=${android.net.Uri.encode(query)}")},
+                    onShopping={navController.navigate("shopping_list")})
+            }
+            composable("notification_post/{postId}?comment={comment}",arguments=listOf(navArgument("postId"){type=NavType.LongType},navArgument("comment"){type=NavType.LongType;defaultValue=0L})){entry->
+                CommunityScreen(initialPostId=entry.arguments!!.getLong("postId"),initialComments=true,initialCommentId=entry.arguments!!.getLong("comment"),onShoppingList={navController.navigate("shopping_list")},onBack={navController.popBackStack()})
+            }
+            composable("recipe_search?query={query}",arguments=listOf(navArgument("query"){type=NavType.StringType;defaultValue=""})){entry->
+                CommunityScreen(initialSearch=entry.arguments?.getString("query").orEmpty(),onShoppingList={navController.navigate("shopping_list")},onBack={navController.popBackStack()})
+            }
+            composable("my_recipes") {
+                CommunityScreen(initialMine=true,onShoppingList={navController.navigate("shopping_list")},onBack={navController.popBackStack()})
+            }
             composable("profile") {
                 val p = profile
                 if (p == null) {
@@ -360,7 +399,9 @@ fun AppNavHost(
                         onAccountSecurity = { navController.navigate("account_security") },
                         onMyFavourite = { navController.navigate("favourites") },
                         onShoppingList = { navController.navigate("shopping_list") },
-                        onLogout = { profileViewModel.logout() }
+                        onLogout = { profileViewModel.logout() },
+                        onNotifications = {navController.navigate("notifications")},
+                        onMyRecipes = {navController.navigate("my_recipes")}
                     )
                 }
             }
@@ -458,7 +499,7 @@ fun AppNavHost(
 }
 
 @Composable
-fun AppRoot() {
+fun AppRoot(externalLink:String="",onLinkHandled:()->Unit={}) {
     val navController = rememberNavController()
     val status by supabase.auth.sessionStatus.collectAsState()
     var initialRoute by rememberSaveable { mutableStateOf<String?>(null) }
@@ -471,7 +512,7 @@ fun AppRoot() {
     LaunchedEffect(Unit) { delay(900); splashFinished = true }
     val start = initialRoute
     Box(Modifier.fillMaxSize()) {
-        if (start != null) AppNavHost(startRoute = start, navController = navController)
+        if (start != null) AppNavHost(startRoute = start, navController = navController,externalLink=externalLink,onLinkHandled=onLinkHandled)
         AnimatedVisibility(
             visible = !splashFinished || start == null,
             enter = fadeIn(tween(180)), exit = fadeOut(tween(220))

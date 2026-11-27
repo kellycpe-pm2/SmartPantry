@@ -1,6 +1,9 @@
 package com.example.smartpantry.ui.home
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -8,6 +11,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.RestaurantMenu
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -67,26 +71,19 @@ internal fun CommunityDiscover(onOpenPost: (Long) -> Unit, onBrowse: () -> Unit)
                     Text("Published recipes will appear here.", style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant)
                 }
             }
-            else -> posts.forEach { post ->
-                Surface(shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, c.outlineVariant),
-                    color = c.surface, modifier = Modifier.fillMaxWidth().clickable { onOpenPost(post.long("id")) }) {
-                    Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Box(Modifier.size(76.dp).clip(RoundedCornerShape(12.dp)).background(c.surfaceVariant), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.RestaurantMenu, null, tint = c.primary)
-                            if (post.str("image").isNotBlank()) AsyncImage(model = post.str("image"), contentDescription = null,
-                                contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            else -> Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+                posts.forEach {post->Surface(Modifier.width(220.dp).clickable{onOpenPost(post.long("id"))},shape=RoundedCornerShape(16.dp),border=BorderStroke(1.dp,c.outlineVariant),color=c.surface){
+                    Column {
+                        RecipePhoto(post.str("image"),Modifier.fillMaxWidth().height(110.dp))
+                        Column(Modifier.padding(10.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
+                            Text(post.str("title"),fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis)
+                            Row(verticalAlignment=Alignment.CenterVertically){
+                                Text(String.format(java.util.Locale.US,"★ %.1f (%d)",post.number("rating"),post.long("ratingCount")),Modifier.weight(1f),style=MaterialTheme.typography.labelMedium,color=c.primary)
+                                Icon(Icons.Default.ChevronRight,"View recipe",Modifier.size(24.dp),tint=c.primary)
+                            }
                         }
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(post.str("title"), fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Text("by ${post.str("author")}", style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant)
-                            if (post.long("ratingCount") > 0) Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Star, null, tint = c.primary, modifier = Modifier.size(15.dp))
-                                Text(String.format(java.util.Locale.US, " %.1f (%d)", post.number("rating"), post.long("ratingCount")), style = MaterialTheme.typography.labelSmall)
-                            } else Text("No ratings yet", style = MaterialTheme.typography.labelSmall, color = c.onSurfaceVariant)
-                        }
-                        Text("›", color = c.primary)
                     }
-                }
+                }}
             }
         }
     }

@@ -98,8 +98,8 @@ internal class CommunityViewModel(application: Application, private val saved: S
             _loading.value = true;_feedFailed.value=false
             try {
                 val result = repo.call("feed", buildJsonObject { put("mode", mode); put("search", search.trim()); put("category", category); put("page", targetPage);filters.forEach { (k,v)->put(k,v) }
-                    if(category in listOf("Malaysian","Chinese","Asian","Western"))put("cuisine",category)
-                    if(category=="Vegan")put("dietary","Vegan") })
+                    if(category in listOf("Malaysian","Malay","Chinese","Indian","Asian","Western"))put("cuisine",category)
+                    if(category in listOf("Vegan","Halal"))put("dietary",category) })
                 val rows = result.rows("posts")
                 _posts.value = if (append) (_posts.value + rows).distinctBy { it.long("id") } else rows
                 page = targetPage; _more.value = rows.size == 30
@@ -137,7 +137,7 @@ internal class CommunityViewModel(application: Application, private val saved: S
     fun openDraft(id: Long, ready: () -> Unit) = mutate {
         val r = repo.call("draft", buildJsonObject { put("recipeId", id) })
         editDraft(RecipeDraft(recipeId=id,title=r.str("title"),category=r.str("category","Malaysian"),description=cleanInput(r.str("description"),5000),image=r.str("image"),vegan=r.flag("vegan"),
-            cuisine=r.str("cuisine"),dishType=r.str("dishType"),dietary=r.str("dietary","Unspecified"),
+            cuisine=r.str("cuisine"),dishType=r.str("dishType"),dietary=r.str("dietary","Unspecified"),publish=r.flag("published"),wasPublished=r.flag("published"),
             ingredients=r.rows("ingredients").map {
                 DraftIngredient(
                     it.long("id"),
@@ -161,14 +161,14 @@ internal class CommunityViewModel(application: Application, private val saved: S
             value = value.copy(image=image); editDraft(value, keepRequest=true)
             val result = repo.call("save_recipe", buildJsonObject {
                 put("requestId", value.requestId); put("recipeId",value.recipeId); put("title",value.title.trim()); put("category",value.category)
-                put("cuisine",value.cuisine);put("dishType",value.dishType);put("dietary",if(value.vegan)"Vegan" else value.dietary);
+                put("publish",value.publish);put("cuisine",value.cuisine);put("dishType",value.dishType);put("dietary",if(value.vegan)"Vegan" else value.dietary);
                 put("description",value.description.trim()); put("image",image); put("vegan",value.vegan)
                 put("steps",JsonArray(value.steps.map { JsonPrimitive(it.trim()) }))
                 put("ingredients",JsonArray(value.ingredients.map { buildJsonObject { put("id",it.id); put("quantity",it.quantity.toDouble()); put("unit",it.unit) } }))
             })
             val id = result.long("recipeId"); check(id > 0) { "Recipe could not be saved." }
             editDraft(value.copy(recipeId=id,requestId=UUID.randomUUID().toString()))
-            refreshCatalog(); _notice.value = "Recipe saved. You can now publish it."; done(id)
+            refreshCatalog(); _notice.value = if(value.publish)"Recipe saved and published." else "Recipe saved in My recipes."; done(id)
         }
     }
     fun deletePersonal(id:Long,done:()->Unit)=mutate {

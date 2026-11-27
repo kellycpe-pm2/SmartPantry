@@ -2,6 +2,8 @@ package com.example.smartpantry.Screen.RecipeUI
 
 import android.content.ClipData
 import android.content.Intent
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Bitmap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -44,7 +46,6 @@ internal fun CommunityExportMenu(data:JsonObject,onDismiss:()->Unit) {
     val recipe=Recipe(recipeId=post.long("recipeId"),recipeName=post.str("title"),recipeCategory=post.str("category"),recipeImage=post.str("image"),
         description=buildString {
             appendLine("by ${post.str("author")}")
-            if(post.str("caption").isNotBlank())appendLine(cleanDisplay(post.str("caption")))
             if(post.str("description").isNotBlank())appendLine(cleanDisplay(post.str("description")))
             appendLine("COOKING STEPS")
             data.words("steps").forEachIndexed{index,step->appendLine("${index+1}. ${cleanDisplay(step)}")}
@@ -55,6 +56,7 @@ internal fun CommunityExportMenu(data:JsonObject,onDismiss:()->Unit) {
     fun work(block:suspend()->Unit){if(busy)return;busy=true;scope.launch{try{block()}catch(cancelled:CancellationException){throw cancelled}catch(problem:Exception){error=problem.message?:"Export failed. Retry."}finally{busy=false}}}
     fun writeResult(uri:android.net.Uri?){val bytes=pending;if(uri!=null&&bytes!=null)work{withContext(Dispatchers.IO){context.contentResolver.openOutputStream(uri)?.use{it.write(bytes)}?:throw java.io.IOException("Cannot write to this location.")};pending=null}}
     val savePdf=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")){writeResult(it)}
+    val saveImage=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")){writeResult(it)}
     val saveTxt=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")){writeResult(it)}
     fun shareFile(file:File,mime:String){
         val uri=FileProvider.getUriForFile(context,"${context.packageName}.fileprovider",file)
@@ -65,32 +67,34 @@ internal fun CommunityExportMenu(data:JsonObject,onDismiss:()->Unit) {
             Text("Share & export",style=MaterialTheme.typography.titleLarge)
             Text(recipe.recipeName,style=MaterialTheme.typography.bodyMedium)
             if(busy)LinearProgressIndicator(Modifier.fillMaxWidth())
-            Button(enabled=!busy,onClick={work{
-                val bitmap=withContext(Dispatchers.Default){buildRecipeShareImage(recipe,ingredients)}
-                val file=File(context.cacheDir,"recipe_${UUID.randomUUID()}.png")
-                try{withContext(Dispatchers.IO){file.outputStream().use{bitmap.compress(Bitmap.CompressFormat.PNG,100,it)}}}finally{bitmap.recycle()}
-                shareFile(file,"image/png")
-            }},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp),shape=RoundedCornerShape(50)) {
-                Icon(Icons.Default.Share,null,Modifier.size(21.dp));Spacer(Modifier.width(8.dp));Text("Share Recipe Image")
+            val link="smartpantry://recipe/${post.long("id")}"
+            suspend fun imageBytes():ByteArray=withContext(Dispatchers.Default){
+                val bitmap=buildRecipeShareImage(recipe,ingredients)
+                try{java.io.ByteArrayOutputStream().use{out->bitmap.compress(Bitmap.CompressFormat.PNG,100,out);out.toByteArray()}}finally{bitmap.recycle()}
             }
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp),verticalAlignment=Alignment.CenterVertically) {
-                OutlinedButton(enabled=!busy,onClick={work{context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply{type="text/plain";putExtra(Intent.EXTRA_TEXT,plain)},"Share recipe"))}},modifier=Modifier.weight(1f).heightIn(min=48.dp),shape=RoundedCornerShape(50)) {
-                    Icon(Icons.Default.Share,null,Modifier.size(20.dp));Spacer(Modifier.width(6.dp));Text("Share")
-                }
-                Button(enabled=!busy,onClick={work{pending=withContext(Dispatchers.Default){buildRecipePdf(recipe,ingredients)};savePdf.launch("$fileName.pdf")}},modifier=Modifier.weight(1f).heightIn(min=48.dp),shape=RoundedCornerShape(50)) {
-                    Icon(Icons.Default.PictureAsPdf,null,Modifier.size(20.dp));Spacer(Modifier.width(6.dp));Text("Save PDF")
-                }
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+                ExportTile("Share recipe",Icons.Default.Share,!busy,Modifier.weight(1f)){work{context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply{type="text/plain";putExtra(Intent.EXTRA_TEXT,plain+"\nOpen in SmartPantry: "+link)},"Share recipe"))}}
+                ExportTile("Save image",Icons.Default.Download,!busy,Modifier.weight(1f)){work{pending=imageBytes();saveImage.launch("$fileName.png")}}
             }
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp),verticalAlignment=Alignment.CenterVertically) {
-                OutlinedButton(enabled=!busy,onClick={pending=plain.toByteArray(Charsets.UTF_8);saveTxt.launch("$fileName.txt")},modifier=Modifier.weight(1f).heightIn(min=48.dp),shape=RoundedCornerShape(50)) {
-                    Icon(Icons.Default.Download,null,Modifier.size(20.dp));Spacer(Modifier.width(6.dp));Text("Save TXT")
-                }
-                OutlinedButton(enabled=!busy,onClick={work{val bytes=withContext(Dispatchers.Default){buildRecipePdf(recipe,ingredients)};val file=File(context.cacheDir,"recipe_${UUID.randomUUID()}.pdf");withContext(Dispatchers.IO){file.writeBytes(bytes)};shareFile(file,"application/pdf")}},modifier=Modifier.weight(1f).heightIn(min=48.dp),shape=RoundedCornerShape(50)) {
-                    Icon(Icons.Default.PictureAsPdf,null,Modifier.size(20.dp));Spacer(Modifier.width(6.dp));Text("Share PDF")
-                }
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+                ExportTile("Share image",Icons.Default.Image,!busy,Modifier.weight(1f)){work{val file=File(context.cacheDir,"recipe_${UUID.randomUUID()}.png");withContext(Dispatchers.IO){file.writeBytes(imageBytes())};shareFile(file,"image/png")}}
+                ExportTile("Copy app link",Icons.Default.Link,!busy,Modifier.weight(1f)){(context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("SmartPantry recipe",link))}
+            }
+            Text("App links open this recipe on devices with SmartPantry installed. Share an image or recipe text for other recipients.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            HorizontalDivider()
+            Text("More formats",style=MaterialTheme.typography.titleMedium)
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                ExportTile("Save PDF",Icons.Default.PictureAsPdf,!busy,Modifier.weight(1f)){work{pending=withContext(Dispatchers.Default){buildRecipePdf(recipe,ingredients)};savePdf.launch("$fileName.pdf")}}
+                ExportTile("Share PDF",Icons.Default.Share,!busy,Modifier.weight(1f)){work{val bytes=withContext(Dispatchers.Default){buildRecipePdf(recipe,ingredients)};val file=File(context.cacheDir,"recipe_${UUID.randomUUID()}.pdf");withContext(Dispatchers.IO){file.writeBytes(bytes)};shareFile(file,"application/pdf")}}
+                ExportTile("Save TXT",Icons.Default.Description,!busy,Modifier.weight(1f)){pending=plain.toByteArray(Charsets.UTF_8);saveTxt.launch("$fileName.txt")}
             }
             Text("Sharing options depend on which apps are installed and support the selected format.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
         }
     }
+}
+@Composable private fun ExportTile(label:String,icon:androidx.compose.ui.graphics.vector.ImageVector,enabled:Boolean,modifier:Modifier,onClick:()->Unit){
+ OutlinedButton(onClick=onClick,enabled=enabled,modifier=modifier.heightIn(min=84.dp),shape=RoundedCornerShape(14.dp),contentPadding=PaddingValues(6.dp)){
+  Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(6.dp)){Icon(icon,null,Modifier.size(24.dp));Text(label,style=MaterialTheme.typography.labelMedium,textAlign=androidx.compose.ui.text.style.TextAlign.Center)}
+ }
 }

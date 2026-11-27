@@ -12,6 +12,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.NotificationsNone
+import com.example.smartpantry.notifications.NotificationBadge
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
@@ -34,6 +36,8 @@ fun ProfileScreen(
     onMyFavourite: () -> Unit,
     onShoppingList: () -> Unit,
     onLogout: () -> Unit,
+    onNotifications: () -> Unit = {},
+    onMyRecipes: () -> Unit = {},
 ) {
     val isAdmin = profile.role == "admin"
 
@@ -42,6 +46,7 @@ fun ProfileScreen(
             add(MenuItem(Icons.Filled.Lock, "Change Password", onChangePassword))
         } else {
             add(MenuItem(Icons.Filled.Lock, "Account & Security", onAccountSecurity))
+            add(MenuItem(Icons.Filled.Star, "My recipes", onMyRecipes))
             add(MenuItem(Icons.Filled.Star, "Favourites", onMyFavourite))
             add(MenuItem(Icons.Filled.ShoppingCart, "Shopping List", onShoppingList))
         }
@@ -52,7 +57,11 @@ fun ProfileScreen(
     // so Text and Icon use BodyText instead of black, wherever this screen is shown.
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp).padding(bottom = 96.dp)) {
-            Text("My Profile", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            val unread by NotificationBadge.count.collectAsState()
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                Text("My profile",Modifier.weight(1f),style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold)
+                IconButton(onClick=onNotifications){BadgedBox(badge={if(unread>0)Badge{Text(if(unread>99)"99+" else unread.toString())}}){Icon(Icons.Filled.NotificationsNone,"Notifications")}}
+            }
 
             LazyColumn(Modifier.weight(1f)) {
                 item { Header(profile) }
