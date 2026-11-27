@@ -24,14 +24,14 @@ internal class CommunityRepository {
     suspend fun call(action: String, payload: JsonObject = buildJsonObject {}): JsonObject = withContext(Dispatchers.IO) {
         supabase.auth.sessionStatus.first { it !is SessionStatus.Initializing }
         userId()
-        val response = supabase.postgrest.rpc(if(action in setOf("feed","draft","save_recipe","catalog","detail","add_missing","personal_needs","shopping_items")) "community_v6" else "community_api", buildJsonObject {
+        val response = supabase.postgrest.rpc(if(action in setOf("feed","draft","save_recipe","catalog","detail","add_missing","personal_needs","shopping_items")) "community_design_v1" else "community_api", buildJsonObject {
             put("p_action", action); put("p_payload", payload)
         })
         Json.parseToJsonElement(response.data) as? JsonObject ?: error("The server returned an unexpected response.")
     }
     suspend fun v5(action:String,payload:JsonObject=buildJsonObject{}):JsonObject=withContext(Dispatchers.IO) {
         supabase.auth.sessionStatus.first { it !is SessionStatus.Initializing }; userId()
-        Json.parseToJsonElement(supabase.postgrest.rpc("community_v6",buildJsonObject { put("p_action",action);put("p_payload",payload) }).data).jsonObject
+        Json.parseToJsonElement(supabase.postgrest.rpc("community_design_v1",buildJsonObject { put("p_action",action);put("p_payload",payload) }).data).jsonObject
     }
     suspend fun recommendations(search:String="",page:Int=0):JsonObject=withContext(Dispatchers.IO) {
         supabase.auth.sessionStatus.first { it !is SessionStatus.Initializing }; userId()

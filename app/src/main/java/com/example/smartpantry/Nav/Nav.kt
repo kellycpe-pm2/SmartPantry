@@ -1,6 +1,8 @@
 package com.example.smartpantry.ui.navigation
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.tween
@@ -149,6 +151,10 @@ fun AppNavHost(
 
     val appContext=LocalContext.current
     val owner=supabase.auth.currentUserOrNull()?.id
+    LaunchedEffect(owner,sessionStatus){
+        if(sessionStatus is SessionStatus.Authenticated || sessionStatus is SessionStatus.NotAuthenticated)
+            com.example.smartpantry.timers.RecipeTimers.bindOwner(appContext,owner.orEmpty())
+    }
     LaunchedEffect(owner,currentRoute){
         NotificationBadge.count.value=0
         if(owner!=null){try{NotificationRepository(appContext).call()}catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled}catch(_:Exception){}}
@@ -156,7 +162,10 @@ fun AppNavHost(
     LaunchedEffect(externalLink,sessionStatus){
         if(externalLink.isNotBlank() && sessionStatus is SessionStatus.Authenticated){
             val uri=android.net.Uri.parse(externalLink)
+            val timerOwner=uri.getQueryParameter("timerOwner")
+            if(timerOwner!=null && timerOwner!=owner){onLinkHandled();return@LaunchedEffect}
             when(uri.host){
+                "private_recipe"->uri.lastPathSegment?.toLongOrNull()?.takeIf{it>0}?.let{navController.navigate("community_post/${-it}")}
                 "recipe"->uri.lastPathSegment?.toLongOrNull()?.takeIf{it>0}?.let{navController.navigate("community_post/$it")}
                 "notifications"->navController.navigate("notifications")
                 "batch"->{val parts=uri.pathSegments;val ing=parts.getOrNull(0)?.toLongOrNull();val batch=parts.getOrNull(1)?.toLongOrNull();if(ing!=null&&batch!=null)navController.navigate("ingredient_detail/$ing?batchId=$batch")}
@@ -169,10 +178,10 @@ fun AppNavHost(
             navController = navController,
             startDestination = startRoute,
             modifier = Modifier.fillMaxSize().statusBarsPadding(),
-            enterTransition = { fadeIn(tween(180)) },
-            exitTransition = { fadeOut(tween(140)) },
-            popEnterTransition = { fadeIn(tween(180)) },
-            popExitTransition = { fadeOut(tween(140)) }
+            enterTransition = { slideInHorizontally(tween(220)){it} + fadeIn(tween(220)) },
+            exitTransition = { slideOutHorizontally(tween(220)){-it} + fadeOut(tween(220)) },
+            popEnterTransition = { slideInHorizontally(tween(220)){-it} + fadeIn(tween(220)) },
+            popExitTransition = { slideOutHorizontally(tween(220)){it} + fadeOut(tween(220)) }
         ) {
             composable("login") {
                 LaunchedEffect(Unit) { authViewModel.clearError() }
@@ -231,7 +240,7 @@ fun AppNavHost(
                         onRecipes = { navController.navigate("recipes") },
                         onRecords = { navController.navigate("records?week=true") },
                         onIngredient = { id -> navController.navigate("ingredient_detail/$id") },
-                        onPantryBatch = { id,batch -> navController.navigate("ingredient_detail/$id?batchId=$batch") },
+                        onPantryBatch = { id,batch -> navController.navigate("ingredient_detail/$id") },
                         onCreateIngredient = {navController.navigate("add")},
                         onAddPantry = {navController.navigate("add_ingredient")},
                         onCreateRecipe = {navController.navigate("community_create")},
@@ -261,7 +270,6 @@ fun AppNavHost(
                 val id = entry.arguments?.getLong("ingredientId") ?: 0L
                 IngredientDetailScreen(
                     ingredientId = id,
-                    focusBatchId=entry.arguments?.getLong("batchId") ?: 0L,
                     onBackClick = { navController.popBackStack() },
                     onEditClick = { navController.navigate("edit_ingredient/$id") },
                     onAddInventoryClick = { _ -> navController.navigate("add_ingredient") },

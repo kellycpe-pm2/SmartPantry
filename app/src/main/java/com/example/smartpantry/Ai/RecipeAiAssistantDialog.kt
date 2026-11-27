@@ -1,6 +1,10 @@
 package com.example.smartpantry.Ai
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -41,15 +45,14 @@ internal fun RecipeAiAssistantDialog(draft:RecipeDraft,catalog:List<JsonObject>,
   Column(Modifier.fillMaxWidth().padding(horizontal=20.dp).padding(bottom=16.dp).navigationBarsPadding().imePadding(),verticalArrangement=Arrangement.spacedBy(14.dp)){
    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){
     Row(Modifier.weight(1f),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
-     Surface(shape=CircleShape,color=c.primaryContainer,modifier=Modifier.size(40.dp)){Box(contentAlignment=Alignment.Center){Icon(Icons.Default.AutoAwesome,null,tint=c.primary,modifier=Modifier.size(20.dp))}}
-     Column{Text("SmartPantry AI",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold);Text(name.ifBlank{"New recipe"},style=MaterialTheme.typography.bodySmall,color=c.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)}
+     Surface(shape=RoundedCornerShape(14.dp),modifier=Modifier.size(40.dp)){Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF235F62),Color(0xFF83D1D1)))),contentAlignment=Alignment.Center){Icon(Icons.Default.AutoAwesome,null,tint=Color.White,modifier=Modifier.size(20.dp))}}
+     Column{Text("SmartPantry AI · ${name.ifBlank{"Recipe"}}",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.ExtraBold,maxLines=1,overflow=TextOverflow.Ellipsis);Text("Recipe drafting & cooking assistant",style=MaterialTheme.typography.labelSmall,color=c.onSurfaceVariant)}
     }
     IconButton(onClick=close){Icon(Icons.Default.Close,"Close Recipe AI")}
    }
-   SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()){
-    SegmentedButton(selected=tab=="fill",onClick={tab="fill";vm.clearError()},enabled=!state.loading,shape=SegmentedButtonDefaults.itemShape(0,2),icon={Icon(Icons.Default.AutoFixHigh,null,Modifier.size(18.dp))},label={Text("Auto-fill")})
-    SegmentedButton(selected=tab=="chat",onClick={tab="chat";vm.clearError()},enabled=!state.loading,shape=SegmentedButtonDefaults.itemShape(1,2),icon={Icon(Icons.Default.ChatBubbleOutline,null,Modifier.size(18.dp))},label={Text("Ask AI")})
-   }
+   Surface(shape=RoundedCornerShape(16.dp),border=BorderStroke(1.dp,c.outlineVariant),color=c.surfaceContainerLow){Row(Modifier.fillMaxWidth().padding(4.dp),horizontalArrangement=Arrangement.spacedBy(4.dp)){
+    listOf("fill" to "Auto-fill","chat" to "Ask AI").forEach{(key,label)->Surface(Modifier.weight(1f).clickable(enabled=!state.loading){tab=key;vm.clearError()},shape=RoundedCornerShape(12.dp),color=if(tab==key)Color(0xFF83D1D1) else c.surfaceContainerLow){Box(Modifier.heightIn(min=44.dp).padding(8.dp),contentAlignment=Alignment.Center){Text(label,fontWeight=FontWeight.Bold,style=MaterialTheme.typography.labelLarge,color=if(tab==key)c.onSurface else c.onSurfaceVariant)}}}
+   }}
    state.error?.let{error->Surface(shape=RoundedCornerShape(14.dp),color=c.errorContainer,modifier=Modifier.fillMaxWidth()){Row(Modifier.padding(12.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){Icon(Icons.Default.ErrorOutline,null,tint=c.onErrorContainer,modifier=Modifier.size(18.dp));Text(error,color=c.onErrorContainer,style=MaterialTheme.typography.bodySmall)}}}
    Column(Modifier.fillMaxWidth().heightIn(max=420.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)){
     if(tab=="fill"){
@@ -63,8 +66,9 @@ internal fun RecipeAiAssistantDialog(draft:RecipeDraft,catalog:List<JsonObject>,
       Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){Text("Ready to auto-fill",fontWeight=FontWeight.Bold);Text("Generate a recipe, check the preview, then apply it to your form. Nothing is saved or published automatically.",style=MaterialTheme.typography.bodySmall)}
      }
      state.preview?.let{preview->
-      Surface(shape=RoundedCornerShape(16.dp),color=c.primaryContainer.copy(alpha=0.45f),modifier=Modifier.fillMaxWidth()){
+      Surface(shape=RoundedCornerShape(16.dp),color=c.surfaceContainerLow,modifier=Modifier.fillMaxWidth()){
        Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+        Text("Generated preview",style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.Bold,color=c.primary)
         Text(preview.title,style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold)
         Text(preview.description,style=MaterialTheme.typography.bodySmall)
         Text("Ingredients",fontWeight=FontWeight.Bold)
@@ -98,12 +102,12 @@ internal fun RecipeAiAssistantDialog(draft:RecipeDraft,catalog:List<JsonObject>,
    }
    if(state.loading)OutlinedButton(onClick={vm.cancel()},modifier=Modifier.fillMaxWidth()){Text("Cancel request")}
    else if(tab=="fill")Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)){
-    OutlinedButton(onClick={vm.generate(name,amount,diet,catalog)},modifier=Modifier.weight(1f).heightIn(min=48.dp),shape=RoundedCornerShape(50)){
+    OutlinedButton(onClick={vm.generate(name,amount,diet,catalog)},modifier=Modifier.weight(1f).heightIn(min=48.dp),shape=RoundedCornerShape(12.dp)){
      Icon(Icons.Default.Refresh,null,Modifier.size(18.dp));Spacer(Modifier.width(6.dp));Text(if(state.preview==null)"Generate" else "Regenerate")
     }
-    state.preview?.let{preview->Button(onClick={if(draft.title.isNotBlank()||draft.description.isNotBlank()||draft.image.isNotBlank()||draft.ingredients.isNotEmpty()||draft.unresolved.isNotEmpty()||draft.steps.any{it.isNotBlank()})confirm=true else onApply(preview)},modifier=Modifier.weight(1.2f).heightIn(min=48.dp),shape=RoundedCornerShape(50)){Icon(Icons.Default.Check,null,Modifier.size(18.dp));Spacer(Modifier.width(6.dp));Text("Apply to recipe")}}
+    state.preview?.let{preview->Button(onClick={if(draft.title.isNotBlank()||draft.description.isNotBlank()||draft.image.isNotBlank()||draft.ingredients.isNotEmpty()||draft.unresolved.isNotEmpty()||draft.steps.any{it.isNotBlank()})confirm=true else onApply(preview)},modifier=Modifier.weight(1.2f).heightIn(min=48.dp),shape=RoundedCornerShape(12.dp)){Icon(Icons.Default.Check,null,Modifier.size(18.dp));Spacer(Modifier.width(6.dp));Text("Apply to recipe")}}
    }else Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
-    OutlinedTextField(question,{question=it.replace(Regex("\\n{3,}"),"\n\n").take(500);vm.clearError()},Modifier.weight(1f),placeholder={Text("Ask about ingredients or cooking…")},maxLines=3,shape=RoundedCornerShape(24.dp))
+    OutlinedTextField(question,{question=it.replace(Regex("\\n{3,}"),"\n\n").take(500);vm.clearError()},Modifier.weight(1f),placeholder={Text("Ask about ingredients or cooking…")},maxLines=3,shape=RoundedCornerShape(14.dp))
     FilledIconButton(onClick={vm.ask(question,state.preview?:draft)},enabled=question.isNotBlank(),modifier=Modifier.size(48.dp),shape=CircleShape){Icon(Icons.AutoMirrored.Filled.Send,"Send recipe question")}
    }
    Text(if(tab=="fill")"AI quantities and dietary suggestions need your review. Halal suggestions are not certification." else "Chat is temporary and uses your Recipe AI quota. Closing this sheet clears the conversation.",style=MaterialTheme.typography.labelSmall,color=c.onSurfaceVariant)

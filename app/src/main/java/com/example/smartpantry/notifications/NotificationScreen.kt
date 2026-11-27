@@ -42,14 +42,15 @@ import java.time.format.DateTimeFormatter
  var saving by remember{mutableStateOf(false)}
  fun refresh(action:String="list",payload:JsonObject=buildJsonObject{},after:(()->Unit)?=null){if(loading)return;loading=true;scope.launch{try{data=repo.call(action,payload);error=null;after?.invoke()}catch(t:Throwable){if(t is CancellationException)throw t;error=userMessage(t)+" Your saved notifications are still shown."}finally{loading=false}}}
  LaunchedEffect(Unit){refresh()}
- if(settingsOpen){NotificationSettings(repo,onBack={settingsOpen=false;refresh()});return}
+ com.example.smartpantry.ui.theme.DirectionalPage(targetState=if(settingsOpen)"settings" else "home",modifier=Modifier.fillMaxSize()){page->
+ if(page=="settings")NotificationSettings(repo,onBack={settingsOpen=false;refresh()}) else {
  Column(Modifier.fillMaxSize()) {
   SmartPantrySectionHeader("Notifications",true,onBack){
-   IconButton(onClick={refresh("read_all")},enabled=!loading){Icon(Icons.Default.DoneAll,"Mark all read")}
+   TextButton(onClick={refresh("read_all")},enabled=!loading){Text("Mark all read",style=MaterialTheme.typography.labelSmall)}
    IconButton(onClick={settingsOpen=true}){Icon(Icons.Default.Settings,"Notification settings")}
   }
   Row(Modifier.fillMaxWidth().padding(horizontal=12.dp),horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-   listOf("All","Interactions","Pantry","System").forEach{tab->FilterChip(category==tab,{category=tab},label={Text(tab,style=MaterialTheme.typography.labelMedium)})}
+   listOf("All","Interactions","Pantry","System").forEach{tab->FilterChip(category==tab,{category=tab},label={Text(if(tab=="Interactions")"Activity" else tab,style=MaterialTheme.typography.labelMedium)})}
   }
   error?.let{Text(it,Modifier.padding(16.dp),color=c.error,style=MaterialTheme.typography.bodySmall)}
   val rows=data.rows("items").filter{category=="All" || it.str("category")==category}
@@ -63,7 +64,7 @@ import java.time.format.DateTimeFormatter
       scope.launch{try{repo.call()}catch(t:Throwable){if(t is CancellationException)throw t}}
       when(row.str("category")){"Interactions"->onPost(row.long("post_id"),row.long("comment_id"));"Pantry"->onBatch(row.long("ingredient_id"),row.long("batch_id"));else->onShopping()}
      }
-     Surface(Modifier.fillMaxWidth().clickable(onClick=open),shape=RoundedCornerShape(16.dp),color=if(unread)c.surfaceContainerLow else c.surface,border=BorderStroke(1.dp,c.outlineVariant)){
+     Surface(Modifier.fillMaxWidth().clickable(onClick=open),shape=RoundedCornerShape(16.dp),color=if(unread)c.primaryContainer.copy(alpha=.4f) else c.surface,border=BorderStroke(1.dp,c.outlineVariant)){
       Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
        Row(verticalAlignment=Alignment.Top,horizontalArrangement=Arrangement.spacedBy(10.dp)){
         Box(Modifier.size(40.dp).clip(CircleShape),contentAlignment=Alignment.Center){
@@ -87,6 +88,8 @@ import java.time.format.DateTimeFormatter
     }
    }
   }
+ }
+ }
  }
 }
 

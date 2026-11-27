@@ -68,8 +68,8 @@ internal fun CommunityDiscover(onOpenPost: (Long) -> Unit, onBrowse: () -> Unit)
                 }
             }
             else -> posts.forEachIndexed {index,post->
-                Row(Modifier.fillMaxWidth().clickable{onOpenPost(post.long("id"))}.padding(vertical=6.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
-                    RecipePhoto(post.str("image"),Modifier.width(104.dp).height(70.dp).clip(RoundedCornerShape(12.dp)))
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.surfaceContainerLow).clickable{onOpenPost(post.long("id"))}.padding(10.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
+                    RecipePhoto(post.str("image"),Modifier.width(64.dp).height(62.dp).clip(RoundedCornerShape(12.dp)))
                     Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
                         Text(post.str("title"),fontWeight=FontWeight.Bold,maxLines=2,overflow=TextOverflow.Ellipsis)
                         Text("by ${post.str("author")}",style=MaterialTheme.typography.bodySmall,color=c.onSurfaceVariant)
@@ -77,7 +77,7 @@ internal fun CommunityDiscover(onOpenPost: (Long) -> Unit, onBrowse: () -> Unit)
                     }
                     Icon(Icons.Default.ChevronRight,"View recipe",Modifier.size(24.dp),tint=c.primary)
                 }
-                if(index<posts.lastIndex)HorizontalDivider(color=c.outlineVariant)
+
             }
         }
     }

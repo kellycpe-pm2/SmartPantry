@@ -154,7 +154,7 @@ internal class CommunityViewModel(application: Application, private val saved: S
         }
     }
     private suspend fun refreshCatalog() { val data = repo.call("catalog"); _catalog.value = data.rows("ingredients"); _mine.value = data.rows("recipes") }
-    fun createRecipeIngredient(name: String, unit: String, category: String, done: (DraftIngredient) -> Unit) = mutate {
+    fun createRecipeIngredient(name: String, unit: String, category: String, imagePath: String = "", done: (DraftIngredient) -> Unit) = mutate {
         val owner = repo.userId()
         val trimmed = name.trim()
         require(trimmed.length in 1..50 && trimmed.none { it.isISOControl() }) {
@@ -168,9 +168,11 @@ internal class CommunityViewModel(application: Application, private val saved: S
             done(DraftIngredient(existing.long("id"), existing.str("name"), unit = unit, image = existing.str("image")))
             return@mutate
         }
+        val uploadedImage=repo.uploadImage(imagePath)
+        check(repo.userId()==owner){"Please reopen this page after switching accounts."}
         val now = System.currentTimeMillis()
         val created = createIngredient(Ingredient(
-            ingredientName = trimmed, unit = unit, category = category, userId = owner,
+            ingredientName = trimmed, unit = unit, category = category, userId = owner, image=uploadedImage.takeIf{it.isNotBlank()},
             isPublish = false, createAt = now, updateAt = now
         ))
         check(repo.userId() == owner) { "Please reopen this page after switching accounts." }
@@ -186,7 +188,7 @@ internal class CommunityViewModel(application: Application, private val saved: S
 
     fun openDraft(id: Long, ready: () -> Unit) = mutate {
         val r = repo.call("draft", buildJsonObject { put("recipeId", id) })
-        editDraft(RecipeDraft(recipeId=id,title=r.str("title"),category=r.str("category","Malaysian"),description=cleanInput(r.str("description"),5000),image=r.str("image"),vegan=r.flag("vegan"),
+        editDraft(RecipeDraft(recipeId=id,title=r.str("title"),category=r.str("category","Malaysian"),description=cleanInput(r.str("description"),5000),videoUrl=r.str("videoUrl"),stepTimers=(r["stepTimers"] as? JsonArray)?.map{it.jsonPrimitive.intOrNull}.orEmpty(),image=r.str("image"),vegan=r.flag("vegan"),
             cuisine=r.str("cuisine"),dishType=r.str("dishType"),dietary=r.str("dietary","Unspecified"),publish=r.flag("published"),wasPublished=r.flag("published"),
             ingredients=r.rows("ingredients").map {
                 DraftIngredient(
@@ -198,6 +200,9 @@ internal class CommunityViewModel(application: Application, private val saved: S
                 )
             }, steps=r.words("steps").map{cleanInput(it,500)}.ifEmpty { listOf("") }))
         ready()
+    }
+    fun ingredientPhoto(uri:Uri,done:(String)->Unit)=mutate {
+        try{done(repo.importImage(getApplication(),uri))}catch(cancelled:CancellationException){throw cancelled}catch(_:Exception){throw IllegalStateException("Could not read this ingredient photo. Choose another image smaller than 20 MB, or continue without a photo.")}
     }
     fun photo(uri: Uri) = mutate {
         val path = repo.importImage(getApplication(), uri)
@@ -212,8 +217,8 @@ internal class CommunityViewModel(application: Application, private val saved: S
             val result = repo.call("save_recipe", buildJsonObject {
                 put("requestId", value.requestId); put("recipeId",value.recipeId); put("title",value.title.trim()); put("category",value.category)
                 put("publish",value.publish);put("cuisine",value.cuisine);put("dishType",value.dishType);put("dietary",if(value.vegan)"Vegan" else value.dietary);
-                put("description",value.description.trim()); put("image",image); put("vegan",value.vegan)
-                put("steps",JsonArray(value.steps.map { JsonPrimitive(it.trim()) }))
+                put("videoUrl",value.videoUrl.trim());put("description",value.description.trim()); put("image",image); put("vegan",value.vegan)
+                put("steps",JsonArray(value.steps.map { JsonPrimitive(it.trim()) }));put("stepTimers",JsonArray(value.steps.indices.map{value.stepTimers.getOrNull(it)?.let{seconds->JsonPrimitive(seconds)}?:JsonNull}))
                 put("ingredients",JsonArray(value.ingredients.map { buildJsonObject { put("id",it.id); put("quantity",it.quantity.toDouble()); put("unit",it.unit) } }))
             })
             val id = result.long("recipeId"); check(id > 0) { "Recipe could not be saved." }

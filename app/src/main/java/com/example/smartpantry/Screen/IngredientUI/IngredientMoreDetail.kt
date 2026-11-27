@@ -66,8 +66,7 @@ fun IngredientDetailScreen(
     onRecipeClick: (Long) -> Unit = {},
     ingredientVm: IngredientViewModel = viewModel(),
     inventoryVm: IngredientUserViewModel = viewModel(),
-    recipeVm: recipe_vm = viewModel(),
-    focusBatchId:Long=0L
+    recipeVm: recipe_vm = viewModel()
 ) {
     val ingredients by ingredientVm.ingredients.collectAsState()
     val inventory by inventoryVm.inventory.collectAsState()
@@ -206,20 +205,6 @@ fun IngredientDetailScreen(
             contentPadding = PaddingValues(18.dp, 8.dp, 18.dp, 32.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            if(focusBatchId>0L) {
-                val selected=inventory.firstOrNull { it.id==focusBatchId && it.ingredientId==ingredientId }
-                item {
-                    Surface(shape=RoundedCornerShape(14.dp),color=scheme.primaryContainer) {
-                        Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
-                            Text("Selected pantry batch",fontWeight=FontWeight.Bold)
-                            if(selected!=null) {
-                                Text("${selected.quantity ?: 0.0} ${selected.quantityUnit.orEmpty()} · ${selected.locationStorage.orEmpty()}")
-                                Text("Expiry: ${java.time.Instant.ofEpochMilli(selected.expiredDate).atZone(java.time.ZoneId.of("Asia/Kuala_Lumpur")).toLocalDate()}",style=MaterialTheme.typography.bodySmall)
-                            } else Text("This batch is no longer available on this device. Refresh Pantry to check its latest status.",style=MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
-            }
             feedbackBanner?.let { msg ->
                 item {
                     Surface(

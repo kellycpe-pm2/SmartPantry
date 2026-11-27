@@ -5,7 +5,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -119,11 +118,13 @@ fun CommunityScreen(
             when {
                 startCreate -> "editor"
                 initialPostId > 0L -> if(initialComments)"reviews" else "detail"
+                initialPostId < 0L -> "personal_detail"
                 else -> "home"
             }
         )
     }
     var postId by rememberSaveable { mutableLongStateOf(initialPostId) }
+    LaunchedEffect(initialPostId){if(initialPostId<0L)vm.openDraft(-initialPostId){screen="personal_detail"}}
     var selectedLocalRecipeId by rememberSaveable { mutableLongStateOf(0L) }
 
     var search by rememberSaveable { mutableStateOf(initialSearch) }
@@ -200,7 +201,7 @@ fun CommunityScreen(
             when (screen) {
                 "reviews" -> screen = "detail"
                 "detail", "editor", "personal_detail" -> {
-                    if ((initialPostId > 0L && screen == "detail") || (startCreate && screen == "editor")) {
+                    if ((initialPostId != 0L && screen in setOf("detail","personal_detail")) || (startCreate && screen == "editor")) {
                         onBack?.invoke()
                     } else {
                         postId = 0L
@@ -282,7 +283,7 @@ fun CommunityScreen(
                         else -> "Community recipes"
                     }
                 },
-                showBack = activeFilter!="post" || screen != "home" || initialSaved || initialMine || initialPostId > 0L || startCreate,
+                showBack = activeFilter!="post" || screen != "home" || initialSaved || initialMine || initialPostId != 0L || startCreate,
                 onBack = back,
                 action = {
                     if(screen=="home" && activeFilter=="post") {
@@ -302,11 +303,9 @@ fun CommunityScreen(
                 }
             )
             if (loading && !root) LinearProgressIndicator(Modifier.fillMaxWidth())
-            Crossfade(
+            com.example.smartpantry.ui.theme.DirectionalPage(
                 targetState = screen,
                 modifier = Modifier.weight(1f),
-                animationSpec = tween(180),
-                label = "community-page"
             ) { visibleScreen ->
                 when (visibleScreen) {
                     "home" -> CommunityHub(
@@ -327,7 +326,7 @@ fun CommunityScreen(
                           description=draft.description,cookingSteps=draft.steps,recipeImage=draft.image,userId=vm.userId),
                         matchInfo=null,busy=busy,modifier=Modifier.fillMaxSize(),ingredients=draft.ingredients,onEdit={screen="editor"},onAddIngredient={addIngredientOnOpen=true;screen="editor"},
                         onPublish={publish(draft.recipeId,draft.title)},onShoppingList=onShoppingList,
-                        needs=privateNeeds,onMissing={
+                        videoUrl=draft.videoUrl,stepTimers=draft.stepTimers,needs=privateNeeds,onMissing={
                             dialogId = draft.recipeId
                             dialog = "missing"
                         }
@@ -710,7 +709,7 @@ fun CommunityScreen(
 private fun LocalRecipeDetails(
  recipe:Recipe,matchInfo:RecommendedRecipeResult?,busy:Boolean,modifier:Modifier=Modifier,
  ingredients:List<DraftIngredient> = emptyList(),onEdit:()->Unit,onPublish:()->Unit,onShoppingList:()->Unit,onAddIngredient:()->Unit=onEdit,
- needs:List<JsonObject> = emptyList(), onMissing:(()->Unit)? = null
+ needs:List<JsonObject> = emptyList(), onMissing:(()->Unit)? = null, videoUrl:String="", stepTimers:List<Int?> = emptyList()
 ) {
  val c=MaterialTheme.colorScheme;var allSteps by rememberSaveable{mutableStateOf(false)}
  Column(modifier.verticalScroll(rememberScrollState()).padding(bottom=24.dp)){
@@ -729,11 +728,9 @@ private fun LocalRecipeDetails(
     TextButton(onClick=onShoppingList,modifier=Modifier.fillMaxWidth()) { Text("Open shopping list") }
    }
    OutlinedButton(onClick=onAddIngredient,enabled=!busy,modifier=Modifier.fillMaxWidth()){Icon(Icons.Default.Add,null);Spacer(Modifier.width(6.dp));Text("Add ingredient to recipe")}
+   CookingVideoCard(videoUrl)
    Text("Cooking steps",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
-   (if(allSteps)recipe.cookingSteps else recipe.cookingSteps.take(3)).forEachIndexed{index,step->Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){
-    Surface(shape=CircleShape,color=c.primaryContainer){Text("${index+1}",Modifier.padding(8.dp),color=c.primary)}
-    Column(Modifier.weight(1f)){ReadableText(step)}
-   }}
+   ReaderStepsViewer(recipe.cookingSteps,stepTimers,"private:${recipe.recipeId}",if(allSteps)recipe.cookingSteps.size else 3,recipeTitle=recipe.recipeName)
    if(recipe.cookingSteps.size>3)TextButton(onClick={allSteps=!allSteps}){Text(if(allSteps)"Show fewer steps" else "Show all ${recipe.cookingSteps.size} steps")}
   }
  }
@@ -753,7 +750,7 @@ internal fun SmartPantrySectionHeader(
         }
         if(title.isNotBlank()) Row(Modifier.fillMaxWidth().padding(start=if(showBack)4.dp else 18.dp,end=6.dp,bottom=4.dp),verticalAlignment=Alignment.CenterVertically) {
             if(showBack && onBack!=null) IconButton(onClick=onBack){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")}
-            Text(title,Modifier.weight(1f),style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,maxLines=2)
+            Text(title,Modifier.weight(1f),style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.ExtraBold,maxLines=2)
             Row(verticalAlignment=Alignment.CenterVertically){action?.invoke()}
         }
     }
@@ -957,19 +954,10 @@ private fun RecipeDetails(
                 Spacer(Modifier.width(8.dp))
                 Text("Add missing ingredients")
             }
+            CookingVideoCard(data.str("videoUrl").ifBlank{post.str("videoUrl")})
             Text("Cooking steps", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             val steps=data.words("steps")
-            (if(allSteps)steps else steps.take(3)).forEachIndexed { index, step ->
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(
-                        Modifier
-                            .size(30.dp)
-                            .background(c.primaryContainer, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) { Text("${index + 1}", fontWeight = FontWeight.Bold, color = c.primary) }
-                    Column(Modifier.weight(1f)) { ReadableText(step) }
-                }
-            }
+            ReaderStepsViewer(steps,(data["stepTimers"] as? JsonArray)?.map{it.jsonPrimitive.intOrNull}.orEmpty(),"post:${post.long("id")}",if(allSteps)steps.size else 3,recipeTitle=post.str("title"))
             if(steps.size>3)TextButton(onClick={allSteps=!allSteps},modifier=Modifier.fillMaxWidth()){Text(if(allSteps)"Show fewer steps" else "Show all ${steps.size} steps")}
         }
     }
@@ -1022,6 +1010,7 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, initialAddI
     var resolvingIngredient by rememberSaveable{mutableIntStateOf(-1)}
     var pickingIngredient by rememberSaveable { mutableStateOf(initialAddIngredient) }
     var ingredientQuery by rememberSaveable { mutableStateOf("") }
+    var ingredientExpanded by rememberSaveable { mutableStateOf(true) }
     var selectedIngredient by rememberSaveable { mutableLongStateOf(0L) }
     var ingredientName by rememberSaveable { mutableStateOf("") }
     var ingredientQuantity by rememberSaveable { mutableStateOf("1") }
@@ -1031,6 +1020,7 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, initialAddI
     var newIngredientName by rememberSaveable { mutableStateOf("") }
     var newIngredientCategory by rememberSaveable { mutableStateOf("Other") }
     var newIngredientUnit by rememberSaveable { mutableStateOf("pcs") }
+    var newIngredientImage by rememberSaveable { mutableStateOf("") }
     var editingIngredient by rememberSaveable { mutableIntStateOf(-1) }
     var fieldError by rememberSaveable { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -1040,6 +1030,8 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, initialAddI
     var photoError by rememberSaveable { mutableStateOf("") }
     val context = LocalContext.current
     val c = MaterialTheme.colorScheme
+    val ingredientGallery=rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()){uri->if(uri!=null)vm.ingredientPhoto(uri){newIngredientImage=it}}
+    val ingredientCamera=com.example.smartpantry.hardware.rememberCameraCapture{uri->vm.ingredientPhoto(uri){newIngredientImage=it}}
     val gallery = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) vm.photo(uri)
     }
@@ -1054,24 +1046,12 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, initialAddI
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        if (true) {
-            FilledTonalButton(
-                onClick = { vm.clearError(); helperVisible = true },
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Icon(Icons.Default.AutoAwesome, null, Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Generate recipe draft")
-            }
-        }
-        if (draft.source.isNotBlank()) Surface(shape = RoundedCornerShape(12.dp), color = c.primaryContainer) {
+        if (draft.source.isNotBlank()) Surface(modifier=Modifier.fillMaxWidth(),shape = RoundedCornerShape(12.dp), color = c.primaryContainer) {
             Text(draft.source, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall, color = c.onPrimaryContainer)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Box {
-                RecipePhoto(draft.image, Modifier.size(116.dp).clip(RoundedCornerShape(18.dp)))
+                RecipePhoto(draft.image, Modifier.size(86.dp).clip(RoundedCornerShape(14.dp)))
                 FilledIconButton(
                     onClick = { photos = true },
                     enabled = !busy,
@@ -1107,15 +1087,16 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, initialAddI
             Column(Modifier.weight(1f)){Text("Publish to community",fontWeight=FontWeight.SemiBold);Text(if(draft.publish)"Visible to other users" else "Only visible in My recipes",style=MaterialTheme.typography.bodySmall,color=c.onSurfaceVariant)}
             Switch(checked=draft.publish,onCheckedChange={vm.editDraft(draft.copy(publish=it))},enabled=!busy)
         }
-        UnitDropdown("Cuisine",draft.cuisine.ifBlank { "Unspecified" },listOf("Unspecified","Malaysian","Malay","Chinese","Indian","Asian","Western")) {
-            vm.editDraft(draft.copy(cuisine=if(it=="Unspecified")"" else it,category=if(it=="Unspecified")"Unspecified" else it))
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)){
+          Column(Modifier.weight(1f)){
+            UnitDropdown("Cuisine",draft.cuisine.ifBlank{"Unspecified"},listOf("Unspecified","Malaysian","Malay","Chinese","Indian","Asian","Western")){vm.editDraft(draft.copy(cuisine=if(it=="Unspecified")"" else it,category=if(it=="Unspecified")"Unspecified" else it))}
+          }
+          Column(Modifier.weight(1f)){
+            UnitDropdown("Dietary",if(draft.vegan)"Vegan" else draft.dietary,listOf("Unspecified","Halal","Vegetarian","Vegan")){vm.editDraft(draft.copy(dietary=it,vegan=it=="Vegan"))}
+          }
         }
-        UnitDropdown("Dish type",draft.dishType.ifBlank { "Unspecified" },listOf("Unspecified","Rice dishes","Noodles","Light meals","Desserts")) {
-            vm.editDraft(draft.copy(dishType=if(it=="Unspecified")"" else it))
-        }
-        UnitDropdown("Dietary preference",if(draft.vegan)"Vegan" else draft.dietary,listOf("Unspecified","Halal","Vegetarian","Vegan")) {
-            vm.editDraft(draft.copy(dietary=it,vegan=it=="Vegan"))
-        }
+        UnitDropdown("Dish type",draft.dishType.ifBlank{"Unspecified"},listOf("Unspecified","Rice dishes","Noodles","Light meals","Desserts")){vm.editDraft(draft.copy(dishType=if(it=="Unspecified")"" else it))}
+        FilledTonalButton(onClick={vm.clearError();helperVisible=true},enabled=!busy,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(12.dp)){Icon(Icons.Default.AutoAwesome,null,Modifier.size(18.dp));Spacer(Modifier.width(6.dp));Text("AI Assist")}
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1131,7 +1112,7 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, initialAddI
                 draft.unresolved.forEachIndexed{index,row->
                     Row(verticalAlignment=Alignment.CenterVertically){
                         Column(Modifier.weight(1f)){Text(row.name,fontWeight=FontWeight.Medium);Text("${row.quantity} ${row.unit}",style=MaterialTheme.typography.labelMedium)}
-                        TextButton(onClick={resolvingIngredient=index;editingIngredient=-1;ingredientQuery=row.name;selectedIngredient=0;ingredientName="";ingredientQuantity=row.quantity;ingredientUnit=row.unit;ingredientImage="";fieldError="";pickingIngredient=true}){Text("Match")}
+                        TextButton(onClick={resolvingIngredient=index;editingIngredient=-1;ingredientQuery=row.name;selectedIngredient=0;ingredientName="";ingredientQuantity=row.quantity;ingredientUnit=row.unit;ingredientImage="";fieldError="";ingredientExpanded=true;pickingIngredient=true}){Text("Match")}
                     }
                 }
             }
@@ -1153,7 +1134,7 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, initialAddI
                         ingredientUnit = row.unit
                         ingredientImage = row.image
                         fieldError = ""
-                        pickingIngredient = true
+                        ingredientExpanded=true; pickingIngredient = true
                     }) { Icon(Icons.Default.Edit, "Edit ${row.name}", Modifier.size(19.dp)) }
                     IconButton(onClick = {
                         vm.editDraft(draft.copy(ingredients = draft.ingredients.filterIndexed { i, _ -> i != index }))
@@ -1171,44 +1152,15 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, initialAddI
                 ingredientQuantity = "1"
                 ingredientUnit = "pcs"
                 fieldError = ""
-                pickingIngredient = true
+                ingredientExpanded=true; pickingIngredient = true
             },
             enabled = draft.ingredients.size + draft.unresolved.size < 50 && !busy,
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp)
         ) { Icon(Icons.Default.Add, null); Text("Add ingredient") }
-        Text("Cooking steps", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        draft.steps.forEachIndexed { index, step ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-                Box(
-                    Modifier
-                        .padding(top = 12.dp)
-                        .size(28.dp)
-                        .background(c.primaryContainer, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) { Text("${index + 1}", fontWeight = FontWeight.Bold, color = c.primary) }
-                OutlinedTextField(
-                    value = step,
-                    onValueChange = { text ->
-                        vm.editDraft(draft.copy(steps = draft.steps.mapIndexed { i, s -> if (i == index) cleanInput(text, 500, 2) else s }))
-                    },
-                    maxLines = 5,
-                    placeholder = { Text("Describe this cooking step") },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp),
-                    supportingText = { Text("${step.length}/500") }
-                )
-                IconButton(onClick = {
-                    vm.editDraft(draft.copy(steps = if (draft.steps.size == 1) listOf("") else draft.steps.filterIndexed { i, _ -> i != index }))
-                }) { Icon(Icons.Default.DeleteOutline, "Remove step ${index + 1}", Modifier.size(20.dp)) }
-            }
-        }
-        OutlinedButton(
-            onClick = { vm.editDraft(draft.copy(steps = draft.steps + "")) },
-            enabled = draft.steps.size < 30 && !busy,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp)
-        ) { Icon(Icons.Default.Add, null); Text("Add step") }
+        OutlinedTextField(value=draft.videoUrl,onValueChange={vm.editDraft(draft.copy(videoUrl=it.trim().take(2048)))},modifier=Modifier.fillMaxWidth(),label={Text("Cooking video (optional)")},placeholder={Text("https://youtu.be/…")},leadingIcon={Icon(Icons.Default.VideoLibrary,null)},supportingText={Text("Paste a shareable HTTPS video link. Local video uploads are not supported here.")},singleLine=true,isError=draft.videoUrl.isNotBlank()&&!validRecipeVideo(draft.videoUrl),shape=RoundedCornerShape(12.dp))
+        AuthorStepsEditor(draft.steps,draft.stepTimers,!busy){newSteps,newTimers->vm.editDraft(draft.copy(steps=newSteps,stepTimers=newTimers))}
+        Text("Timers are optional. For AI drafts, review each step and add a timer only where needed.",style=MaterialTheme.typography.bodySmall,color=c.onSurfaceVariant)
         if (!helperVisible && !creatingIngredient) draftError?.let { Text(it, color = c.error) }
         Button(
             onClick = { if(draft.wasPublished && !draft.publish)confirmHide=true else vm.saveDraft(onSaved) },
@@ -1230,7 +1182,7 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, initialAddI
     if(helperVisible)com.example.smartpantry.Ai.RecipeAiAssistantDialog(
         draft=draft,catalog=catalog,
         onDismiss={helperVisible=false;vm.clearError()},
-        onApply={generated->vm.editDraft(generated.copy(recipeId=draft.recipeId,image=draft.image,publish=draft.publish,wasPublished=draft.wasPublished));helperVisible=false}
+        onApply={generated->vm.editDraft(generated.copy(recipeId=draft.recipeId,image=draft.image,videoUrl=draft.videoUrl,publish=draft.publish,wasPublished=draft.wasPublished));helperVisible=false}
     )
     if (photos) ModalBottomSheet(onDismissRequest = { photos = false }) {
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1268,40 +1220,18 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, initialAddI
         text = { Text(photoError) },
         confirmButton = { TextButton(onClick = { photoError = "" }) { Text("OK") } }
     )
-    if (creatingIngredient) ModalBottomSheet(onDismissRequest = {
-        if (!busy) { vm.clearError(); creatingIngredient = false }
-    }) {
-        Column(
-            Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text("Create ingredient", style = MaterialTheme.typography.titleLarge)
-            OutlinedTextField(
-                newIngredientName, { newIngredientName = it.take(50) }, Modifier.fillMaxWidth(),
-                label = { Text("Ingredient name") }, singleLine = true, enabled = !busy
-            )
-            UnitDropdown("Category", newIngredientCategory, listOf("Vegetable", "Fruit", "Meat", "Dairy", "Grain", "Spice", "Other"), !busy) {
-                newIngredientCategory = it
-            }
-            UnitDropdown("Catalogue unit", newIngredientUnit, recipeUnits, !busy) { newIngredientUnit = it }
-            Text("Creates a catalogue entry. Pantry stock is unchanged.", style = MaterialTheme.typography.bodySmall)
-            draftError?.let { Text(it, color = c.error) }
-            Button(
-                onClick = {
-                    vm.createRecipeIngredient(newIngredientName, newIngredientUnit, newIngredientCategory) { created ->
-                        selectedIngredient = created.id
-                        ingredientName = created.name
-                        ingredientQuery = created.name
-                        ingredientImage = created.image
-                        if (resolvingIngredient < 0) ingredientUnit = created.unit
-                        creatingIngredient = false
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !busy && newIngredientName.isNotBlank()
-            ) { Text(if (busy) "Saving…" else "Create and select") }
+    if(creatingIngredient)com.example.smartpantry.ui.theme.CustomIngredientSheet(
+        name=newIngredientName,onName={newIngredientName=it;vm.clearError()},unit=newIngredientUnit,onUnit={newIngredientUnit=it;vm.clearError()},units=recipeUnits,busy=busy,error=draftError,
+        explanation="Creates or selects your ingredient catalogue entry. Pantry stock is unchanged.",onDismiss={vm.clearError();creatingIngredient=false},
+        onConfirm={vm.createRecipeIngredient(newIngredientName,newIngredientUnit,newIngredientCategory,newIngredientImage){created->selectedIngredient=created.id;ingredientName=created.name;ingredientQuery=created.name;ingredientImage=created.image;if(resolvingIngredient<0)ingredientUnit=created.unit;ingredientExpanded=false;creatingIngredient=false}},
+        extra={
+            com.example.smartpantry.ui.theme.IngredientPhotoActions(newIngredientImage,busy,
+                onCamera={try{ingredientCamera()}catch(_:Exception){photoError="Camera could not open. Try Photos or check camera availability."}},
+                onPhotos={ingredientGallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))},
+                onRemove={newIngredientImage=""})
+            UnitDropdown("Category",newIngredientCategory,listOf("Vegetable","Fruit","Meat","Dairy","Grain","Spice","Other"),!busy){newIngredientCategory=it}
         }
-    }
+    )
     if (pickingIngredient && !creatingIngredient) ModalBottomSheet(onDismissRequest = { pickingIngredient = false }) {
         Column(
             Modifier
@@ -1317,47 +1247,13 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, initialAddI
                 fontWeight = FontWeight.Bold
             )
             if (editingIngredient < 0) {
-                OutlinedTextField(
-                    value = ingredientQuery,
-                    onValueChange = { ingredientQuery = it; selectedIngredient = 0 },
-                    leadingIcon = { Icon(Icons.Default.Search, null) },
-                    placeholder = { Text("Search your ingredient catalogue") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
+                com.example.smartpantry.ui.theme.IngredientPickerField(
+                    query=ingredientQuery,onQuery={ingredientQuery=it;selectedIngredient=0;ingredientExpanded=true},expanded=ingredientExpanded,onExpanded={ingredientExpanded=it},
+                    choices=catalog.map{com.example.smartpantry.ui.theme.IngredientChoice(it.long("id").toString(),it.str("name"))},selectedKey=selectedIngredient.takeIf{it>0}?.toString(),enabled=!busy,
+                    onSelect={choice->catalog.firstOrNull{it.long("id").toString()==choice.key}?.let{row->selectedIngredient=row.long("id");ingredientName=row.str("name");ingredientQuery=ingredientName;ingredientImage=row.str("image");if(resolvingIngredient<0)ingredientUnit=normalizedUnit(row.str("unit")).takeIf{it in recipeUnits}?:"pcs";ingredientExpanded=false}},
+                    onCustom={vm.clearError();newIngredientName=ingredientQuery.trim().take(50);newIngredientUnit=ingredientUnit;newIngredientCategory="Other";newIngredientImage="";creatingIngredient=true},
+                    thumbnail={choice->val row=catalog.first{it.long("id").toString()==choice.key};RecipePhoto(row.str("image").ifBlank{choice.name.lowercase()},Modifier.size(32.dp).clip(RoundedCornerShape(10.dp)),false)}
                 )
-                val matches = catalog.filter { it.str("name").contains(ingredientQuery.trim(), true) }.take(30)
-                
-                Column(Modifier.heightIn(max = 210.dp).verticalScroll(rememberScrollState())) {
-                    matches.forEach { row ->
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(if (selectedIngredient == row.long("id")) c.primaryContainer else Color.Transparent)
-                                .clickable {
-                                    selectedIngredient = row.long("id")
-                                    ingredientName = row.str("name")
-                                    ingredientImage = row.str("image")
-                                    if (resolvingIngredient < 0) ingredientUnit = normalizedUnit(row.str("unit")).takeIf { it in recipeUnits } ?: "pcs"
-                                }
-                                .padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            RecipePhoto(row.str("image"), Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)), false)
-                            Text(row.str("name"), Modifier.weight(1f), fontWeight = FontWeight.Medium)
-                            if (selectedIngredient == row.long("id")) Icon(Icons.Default.Check, null, tint = c.primary)
-                        }
-                    }
-                }
-                OutlinedButton(onClick = {
-                        vm.clearError()
-                        newIngredientName = ingredientQuery.trim().take(50)
-                        newIngredientUnit = ingredientUnit
-                        newIngredientCategory = "Other"
-                        creatingIngredient = true
-                    }, enabled = !busy) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(8.dp)); Text("Create new ingredient") }
 
             }
             if (selectedIngredient > 0) Text("Selected: $ingredientName", fontWeight = FontWeight.Bold)
@@ -1371,7 +1267,7 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, initialAddI
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp)
                 )
-                Box(Modifier.weight(1f).padding(top = 8.dp)) {
+                Box(Modifier.weight(1f)) {
                     UnitDropdown("Unit", ingredientUnit, recipeUnits) { ingredientUnit = it }
                 }
             }

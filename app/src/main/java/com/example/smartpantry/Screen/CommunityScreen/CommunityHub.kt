@@ -61,14 +61,12 @@ internal fun CommunityHub(vm:CommunityViewModel,mode:String,search:String,onSear
     Column(Modifier.fillMaxWidth().padding(horizontal=18.dp,vertical=4.dp)) {
      Row(verticalAlignment=Alignment.CenterVertically) {
      OutlinedTextField(search,{onSearch(it.take(80))},Modifier.weight(1f),singleLine=true,placeholder={Text("Search recipes or ingredients")},
-      leadingIcon={Icon(Icons.Default.Search,null)},trailingIcon={if(search.isNotBlank())IconButton(onClick={onSearch("")}){Icon(Icons.Default.Close,"Clear search")}},shape=RoundedCornerShape(16.dp))
-      if(mode=="saved") IconButton(onClick={filterOpen=true}) { Icon(Icons.Default.Tune,"Filter favourites",tint=c.primary) }
+      leadingIcon={Icon(Icons.Default.Search,null)},trailingIcon={Row(verticalAlignment=Alignment.CenterVertically){if(search.isNotBlank())IconButton(onClick={onSearch("")}){Icon(Icons.Default.Close,"Clear search")};if(mode in setOf("post","saved"))IconButton(onClick={filterOpen=true}){Icon(Icons.Default.Tune,if(mode=="saved")"Filter favourites" else "Filter recipes",tint=c.primary)}}},shape=RoundedCornerShape(12.dp),textStyle=MaterialTheme.typography.bodySmall)
      }
      if(mode=="post") Row(verticalAlignment=Alignment.CenterVertically) {
       Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-       listOf("All","Malaysian","Malay","Chinese","Indian","Halal").forEach { label->FilterChip(selected=category==label && (label!="All" || filters.isEmpty()),onClick={onCategory(label)},label={Text(label)}) }
+       listOf("All","Malaysian","Malay","Chinese","Indian").forEach { label->FilterChip(selected=category==label && (label!="All" || filters.isEmpty()),onClick={onCategory(label)},label={Text(label)}) }
       }
-      IconButton(onClick={filterOpen=true}){Icon(Icons.Default.Tune,"Filter recipes",tint=c.primary)}
      }
      if(mode=="personal")Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
       listOf("All","Published","Private").forEach{label->FilterChip(selected=publication==label,onClick={publication=label},label={Text(label)})}
@@ -81,7 +79,7 @@ internal fun CommunityHub(vm:CommunityViewModel,mode:String,search:String,onSear
     if(mode=="post" || mode=="for_me") {
      item {
       Row(verticalAlignment=Alignment.CenterVertically) {
-       Column(Modifier.weight(1f)) { Text("From your pantry",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold);Text("Use what you have before it expires.",style=MaterialTheme.typography.bodySmall,color=c.onSurfaceVariant) }
+       Text("From your pantry",Modifier.weight(1f),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold)
        if(mode=="post")TextButton(onClick={onMode("for_me")}){Text("See all")}
       }
      }
@@ -93,16 +91,11 @@ internal fun CommunityHub(vm:CommunityViewModel,mode:String,search:String,onSear
      if(recs.isNotEmpty()) {
       if(mode=="post")item {
        Row(Modifier.horizontalScroll(rememberScrollState()).height(IntrinsicSize.Min),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-        pantryCarousel(recs).forEach { row->Surface(Modifier.width(220.dp).fillMaxHeight().clickable { open(row) },shape=RoundedCornerShape(16.dp),border=BorderStroke(1.dp,c.outlineVariant),color=c.surface) {
-         Column { RecipePhoto(row.str("image"),Modifier.fillMaxWidth().height(100.dp));Column(Modifier.padding(10.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
-          Text(row.str("title"),fontWeight=FontWeight.Bold,maxLines=2,overflow=TextOverflow.Ellipsis)
-          RecommendationLabel(row)
-          Text(if(row.long("missing")==0L)"Ready with your pantry stock" else "Missing ${row.long("missing")} ingredient${if(row.long("missing")==1L)"" else "s"}",style=MaterialTheme.typography.labelSmall,color=c.onSurfaceVariant)
-         } }
-        } }
+        pantryCarousel(recs).forEach { row->PantryImageCard(row,Modifier.width(176.dp)){open(row)} }
+
        }
       } else {
-       items(recs,key={"recommend_${it.long("recipeId")}"}) { row->HubPost(row,vm.userId,busy,{open(row)},{vm.action("favourite",row.long("id"),buildJsonObject{put("enabled",!row.flag("favourite"))}){vm.loadRecommendations(search)}},{onEditPost(row)},{onEditRecipe(row)},{onRemovePost(row)}) }
+       items(recs,key={"recommend_${it.long("recipeId")}"}) { row->HubPost(row,vm.userId,busy,{open(row)},{vm.action("favourite",row.long("id"),buildJsonObject{put("enabled",!row.flag("favourite"))}){vm.loadRecommendations(search)}},{onEditPost(row)},{onEditRecipe(row)},{onRemovePost(row)},compact=mode=="saved") }
        if(recMore)item { OutlinedButton(onClick={vm.loadRecommendations(search,true)},enabled=!recLoading,modifier=Modifier.fillMaxWidth()){Text("Load more recommendations")} }
       }
      }
@@ -116,7 +109,7 @@ internal fun CommunityHub(vm:CommunityViewModel,mode:String,search:String,onSear
        if(mode=="saved")vm.feed("saved",search,category,keepVisible=true,filters=filters)
        if(row.flag("favourite"))scope.launch{if(snackbar.showSnackbar("Removed from favourites","Undo")==SnackbarResult.ActionPerformed)vm.action("favourite",row.long("id"),buildJsonObject{put("enabled",true)}){if(mode=="saved")vm.feed("saved",search,category,keepVisible=true,filters=filters)}}
       }},
-      {onEditPost(row)},{onEditRecipe(row)},{onRemovePost(row)}) }
+      {onEditPost(row)},{onEditRecipe(row)},{onRemovePost(row)},compact=mode=="saved") }
      if(more)item { OutlinedButton(onClick={vm.feed(if(mode=="saved")"saved" else "feed",search,category,true,filters=filters)},enabled=!loading,modifier=Modifier.fillMaxWidth()){Text("Load more recipes")} }
     }
     if(mode=="personal") {
@@ -124,7 +117,7 @@ internal fun CommunityHub(vm:CommunityViewModel,mode:String,search:String,onSear
      if(rows.isEmpty() && !loading)item { HubNotice("No personal recipes match. Tap + to create a recipe, then publish it when you are ready.") }
      items(rows,key={"mine_${it.long("id")}"}) { row->
       val card=buildJsonObject { row.forEach{(k,v)->put(k,v)};put("id",row.long("postId"));put("recipeId",row.long("id"));put("author","You");put("owner",vm.userId);put("showFavourite",false) }
-      HubPost(card,vm.userId,busy,{if(row.flag("published"))onOpenPost(row.long("postId")) else onOpenPersonal(row.long("id"))},{},{},{},{})
+      HubPost(card,vm.userId,busy,{if(row.flag("published"))onOpenPost(row.long("postId")) else onOpenPersonal(row.long("id"))},{},{},{},{},compact=true)
      }
 
     }
@@ -153,18 +146,31 @@ internal fun pantryCarousel(rows:List<JsonObject>):List<JsonObject> {
   Text(row.words("soonNames").joinToString(" · "),style=MaterialTheme.typography.labelSmall,maxLines=1,overflow=TextOverflow.Ellipsis)
  } else Text("${if(row.long("required")>0)row.long("covered")*100/row.long("required") else 0}% pantry match",style=MaterialTheme.typography.labelMedium,color=c.primary)
 }
-@Composable private fun HubPost(row:JsonObject,userId:String,busy:Boolean,onOpen:()->Unit,onFavourite:()->Unit,onEditPost:()->Unit,onEditRecipe:()->Unit,onRemove:()->Unit) {
+@Composable private fun HubPost(row:JsonObject,userId:String,busy:Boolean,onOpen:()->Unit,onFavourite:()->Unit,onEditPost:()->Unit,onEditRecipe:()->Unit,onRemove:()->Unit,compact:Boolean=false) {
  val c=MaterialTheme.colorScheme
+ if(compact){
+  Surface(Modifier.fillMaxWidth(),shape=RoundedCornerShape(16.dp),border=BorderStroke(1.dp,c.outlineVariant),color=c.surface){Row(Modifier.padding(10.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
+   RecipePhoto(row.str("image"),Modifier.size(78.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick=onOpen))
+   Column(Modifier.weight(1f).clickable(onClick=onOpen),verticalArrangement=Arrangement.spacedBy(4.dp)){
+    Text(row.str("title"),fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleSmall,maxLines=2,overflow=TextOverflow.Ellipsis)
+    Text(row.str("description").ifBlank{row.str("caption")},style=MaterialTheme.typography.bodySmall,maxLines=2,overflow=TextOverflow.Ellipsis,color=c.onSurfaceVariant)
+    Text(String.format(java.util.Locale.US,"★ %.1f",row.number("rating"))+" · "+row.str("author","You"),style=MaterialTheme.typography.labelSmall,color=c.primary)
+   }
+   if(row["showFavourite"]?.jsonPrimitive?.booleanOrNull!=false && row.flag("published"))IconButton(onClick=onFavourite,enabled=!busy){Icon(Icons.Default.Bookmark,"Remove favourite",tint=c.primary)}
+   else Surface(shape=RoundedCornerShape(8.dp),color=c.surfaceContainerLow){Text(if(row.flag("published"))"Published" else "Private",Modifier.padding(7.dp,4.dp),style=MaterialTheme.typography.labelSmall,color=c.primary)}
+  }}
+  return
+ }
  Surface(Modifier.fillMaxWidth(),shape=RoundedCornerShape(18.dp),border=BorderStroke(1.dp,c.outlineVariant),color=c.surface) {
   Column {
    Box {
-    RecipePhoto(row.str("image"),Modifier.fillMaxWidth().height(176.dp).clickable(onClick=onOpen))
+    RecipePhoto(row.str("image"),Modifier.fillMaxWidth().height(164.dp).clickable(onClick=onOpen))
     if(row.flag("published") && row["showFavourite"]?.jsonPrimitive?.booleanOrNull!=false)Surface(Modifier.align(Alignment.TopEnd).padding(8.dp),shape=CircleShape,color=c.surface){IconButton(onClick=onFavourite,enabled=!busy){Icon(if(row.flag("favourite"))Icons.Default.Bookmark else Icons.Default.BookmarkBorder,if(row.flag("favourite"))"Remove favourite" else "Add favourite",tint=c.primary)}}
    }
    Column(Modifier.fillMaxWidth().clickable(onClick=onOpen).padding(12.dp),verticalArrangement=Arrangement.spacedBy(7.dp)) {
     Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
      Text(row.str("title"),Modifier.weight(1f),fontWeight=FontWeight.Bold,style=MaterialTheme.typography.titleMedium,maxLines=2,overflow=TextOverflow.Ellipsis)
-     Text(String.format(java.util.Locale.US,"★ %.1f (%d)",row.number("rating"),row.long("ratingCount")),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Bold,color=c.primary)
+     Text(String.format(java.util.Locale.US,"★ %.1f",row.number("rating")),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Bold,color=c.onSurface)
     }
     val description=row.str("description").ifBlank{row.str("caption")}
     if(description.isNotBlank())Text(cleanDisplay(description),maxLines=2,overflow=TextOverflow.Ellipsis,style=MaterialTheme.typography.bodySmall)
@@ -175,7 +181,7 @@ internal fun pantryCarousel(rows:List<JsonObject>):List<JsonObject> {
       else Surface(shape=CircleShape,color=c.primaryContainer,modifier=Modifier.fillMaxSize()){Box(contentAlignment=Alignment.Center){Text(row.str("author","Member").take(1).uppercase(),fontWeight=FontWeight.Bold)}}
      }
      Column(Modifier.weight(1f)){Text(if(row.str("owner")==userId)"You" else row.str("author","Member"),style=MaterialTheme.typography.labelMedium);Text(row.str("createdAt").take(10),style=MaterialTheme.typography.labelSmall,color=c.onSurfaceVariant)}
-     if(!row.flag("published"))Text("Private",style=MaterialTheme.typography.labelSmall,color=c.onSurfaceVariant)
+     if(row["showFavourite"]?.jsonPrimitive?.booleanOrNull==false)Surface(shape=RoundedCornerShape(8.dp),color=if(row.flag("published"))c.primaryContainer else c.surfaceContainerLow){Text(if(row.flag("published"))"Published" else "Private",Modifier.padding(7.dp,4.dp),style=MaterialTheme.typography.labelSmall,color=c.primary)}
     }
    }
   }

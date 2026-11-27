@@ -46,7 +46,7 @@ import java.time.Instant
   PullToRefreshBox(isRefreshing=loading,onRefresh={if(valid)vm.refresh(start,end)},modifier=Modifier.fillMaxSize()) {
    LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(18.dp,8.dp,18.dp,124.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
     item { Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(7.dp)) {listOf("This week","7 days","30 days","Custom").forEach {p->FilterChip(selected=period==p,onClick={period=p;if(p!="Custom"){end=today.toString();start=when(p){"This week"->today.with(java.time.DayOfWeek.MONDAY);"30 days"->today.minusDays(29);else->today.minusDays(6)}.toString()}},label={Text(p,style=MaterialTheme.typography.labelMedium)})} } }
-    item { Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(onClick={period="Custom";choosing="start"},modifier=Modifier.weight(1f)){Icon(Icons.Default.DateRange,null,Modifier.size(18.dp));Text(start)};OutlinedButton(onClick={period="Custom";choosing="end"},modifier=Modifier.weight(1f)){Text(end)}} }
+    item { Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(onClick={period="Custom";choosing="start"},modifier=Modifier.weight(1f)){Icon(Icons.Default.DateRange,null,Modifier.size(18.dp));Text(LocalDate.parse(start).format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy",java.util.Locale.ENGLISH)))};OutlinedButton(onClick={period="Custom";choosing="end"},modifier=Modifier.weight(1f)){Icon(Icons.Default.DateRange,null,Modifier.size(18.dp));Text(LocalDate.parse(end).format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy",java.util.Locale.ENGLISH)))}} }
     if(!valid)item{Text("Choose a start date on or before the end date. Future dates are not allowed.",color=c.error)}
     message?.let{item{Text(it,color=c.error,style=MaterialTheme.typography.bodySmall)}}
     if(valid){
@@ -62,7 +62,6 @@ import java.time.Instant
  }
  if(choosing.isNotBlank()) {
   val field=choosing;val selected=LocalDate.parse(if(field=="start")start else end)
-  val state=rememberDatePickerState(initialSelectedDateMillis=selected.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli())
-  DatePickerDialog(onDismissRequest={choosing=""},confirmButton={TextButton(onClick={state.selectedDateMillis?.let{millis->val d=Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate();if(field=="start")start=d.toString() else end=d.toString()};choosing=""}){Text("OK")}},dismissButton={TextButton(onClick={choosing=""}){Text("Cancel")}}){DatePicker(state=state)}
+  com.example.smartpantry.ui.theme.SmartPantryDateDialog(if(field=="start")"Start date" else "End date",selected,earliest=if(field=="end")LocalDate.parse(start) else null,latest=if(field=="start")LocalDate.parse(end).coerceAtMost(today) else today,onDismiss={choosing=""},onDate={d->if(field=="start")start=d.toString() else end=d.toString()})
  }
 }

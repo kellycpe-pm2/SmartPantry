@@ -339,10 +339,12 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
     ) {
+        Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             SmartPantrySectionHeader(title=title,showBack=true,onBack={if(!busy)goBack()})
             // Shared header, spacing and theme with Community.
-            key(page) {
+            com.example.smartpantry.ui.theme.DirectionalPage(targetState=page.name){visiblePage->
+                val visibleShoppingPage=ShoppingPage.valueOf(visiblePage)
                 PullToRefreshBox(isRefreshing=refreshing,onRefresh={if(!busy){refreshing=true;mutate{try{load(forceSync=true)}finally{refreshing=false}}}},modifier=Modifier.fillMaxSize()) {
                     Column(Modifier.fillMaxSize().imePadding()) {
                         Column(
@@ -350,7 +352,7 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
                                 .weight(1f)
                                 .fillMaxWidth()
                                 .verticalScroll(rememberScrollState())
-                                .padding(20.dp),
+                                .padding(20.dp).padding(bottom=if(page==ShoppingPage.LIST)110.dp else 0.dp),
                             verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
                             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -368,16 +370,24 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
                             syncStatus?.let { status ->
                                 Text(status,style=MaterialTheme.typography.bodySmall,color=if(pendingCount>0 && !offline) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            when (page) {
+                            when (visibleShoppingPage) {
                                 ShoppingPage.LIST -> {
-                                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-                                        ShoppingMetric(toBuy.size,"To buy",Modifier.weight(1f))
-                                        ShoppingMetric(purchased.size,"Purchased",Modifier.weight(1f))
+                                    val priced=toBuy.filter{it.unitPrice!=null}
+                                    Surface(shape=RoundedCornerShape(16.dp),color=MaterialTheme.colorScheme.surfaceContainerLow,border=BorderStroke(1.dp,MaterialTheme.colorScheme.outlineVariant)){
+                                        Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(9.dp)){
+                                            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){
+                                                Text("${toBuy.size} to buy · ${purchased.size} purchased",style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.Bold)
+                                                Text(String.format(Locale.US,"Est. RM %.2f",priced.sumOf{it.quantity*(it.unitPrice?:0.0)}),style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
+                                            }
+                                            LinearProgressIndicator(progress={if(toBuy.size+purchased.size==0)0f else purchased.size.toFloat()/(toBuy.size+purchased.size)},modifier=Modifier.fillMaxWidth().height(8.dp),color=MaterialTheme.colorScheme.primary,trackColor=MaterialTheme.colorScheme.surface)
+                                            Text("Estimate covers items still to buy.",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                            if(priced.size<toBuy.size)Text("${toBuy.size-priced.size} unpriced item(s) excluded from estimate",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
                                     }
-                                    val reviewTone=if(pantryKnown && reviewCount>0)MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow
+                                    val reviewTone=if(pantryKnown && reviewCount>0)Color(0xFFFFF6CF) else MaterialTheme.colorScheme.surfaceContainerLow
                                     Surface(modifier=Modifier.fillMaxWidth().clickable(enabled=!busy){page=ShoppingPage.REVIEW;mutate{load()}},shape=RoundedCornerShape(16.dp),color=reviewTone) {
                                         Row(Modifier.padding(horizontal=14.dp,vertical=12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                                            Icon(Icons.Default.ShoppingBasket,null,tint=MaterialTheme.colorScheme.primary,modifier=Modifier.size(26.dp))
+                                            Icon(Icons.Default.Visibility,null,tint=MaterialTheme.colorScheme.primary,modifier=Modifier.size(26.dp))
                                             Text(when {busy->"Checking pantry stock…";!pantryKnown->"Unable to check pantry stock";reviewCount>0->reviewCountLabel(reviewCount);else->"No purchase review"},Modifier.weight(1f),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Bold)
                                             Icon(Icons.Default.ChevronRight,"Open purchase review",Modifier.size(24.dp))
                                         }
@@ -388,9 +398,7 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text("To buy", style = MaterialTheme.typography.titleLarge)
-                                        Button(enabled = ready && !busy, onClick = { editingItem = ListItem(0, "", 1.0, "pcs") }) {
-                                            Text("+ Add item")
-                                        }
+
                                     }
                                     ShoppingPanel {
                                         if (ready && toBuy.isEmpty()) Text("Nothing to buy yet.")
@@ -409,13 +417,6 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
                                         }
                                     }
 
-                                    val priced=toBuy.filter{it.unitPrice!=null}
-                                    if(priced.isNotEmpty()) Surface(shape=RoundedCornerShape(12.dp),color=MaterialTheme.colorScheme.surfaceVariant) {
-                                        Row(Modifier.fillMaxWidth().padding(12.dp),verticalAlignment=Alignment.CenterVertically) {
-                                            Icon(Icons.Default.Calculate,null,Modifier.size(20.dp));Spacer(Modifier.width(8.dp))
-                                            Text(String.format(Locale.US,"Est. RM %.2f · %d/%d items priced",priced.sumOf{it.quantity*(it.unitPrice?:0.0)},priced.size,toBuy.size),style=MaterialTheme.typography.bodySmall)
-                                        }
-                                    }
                                     Text("Purchased", style = MaterialTheme.typography.titleLarge)
                                     ShoppingPanel {
                                         if (ready && purchased.isEmpty()) Text("No purchased items yet.")
@@ -474,7 +475,7 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
                                 }
                             }
                         }
-                        if (page == ShoppingPage.REVIEW) {
+                        if (visibleShoppingPage == ShoppingPage.REVIEW) {
                             Button(
                                 onClick = ::goBack,
                                 modifier = Modifier.padding(horizontal = 20.dp)
@@ -485,6 +486,8 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
                     }
                 }
             }
+        }
+        if(page==ShoppingPage.LIST)FloatingActionButton(onClick={if(ready&&!busy)editingItem=ListItem(0,"",1.0,"pcs")},modifier=Modifier.align(Alignment.BottomEnd).padding(end=20.dp,bottom=104.dp),containerColor=MaterialTheme.colorScheme.primary,contentColor=MaterialTheme.colorScheme.onPrimary,shape=androidx.compose.foundation.shape.CircleShape){Icon(Icons.Default.Add,"Add shopping item")}
         }
     }
     editingItem?.let { item ->
@@ -826,7 +829,9 @@ private fun ShoppingReview(
                             val tone=if(suggestion.urgent>0)colors.onErrorContainer else warningText
                             Icon(if(suggestion.urgent>0)Icons.Default.WarningAmber else Icons.Default.Schedule,null,Modifier.size(18.dp),tint=tone)
                             Column(verticalArrangement=Arrangement.spacedBy(3.dp)) {
-                                Text(if(suggestion.urgent>0) "Use first · stock expires today or tomorrow" else "Use first · stock expires within 3 days",style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.Bold,color=tone)
+                                val today=LocalDate.now(ZoneId.of("Asia/Kuala_Lumpur"))
+                                val firstExpiry=suggestion.batches.filter{it.ingredientId==item.ingredientId && it.quantity>0 && !it.expiry.isBefore(today)}.minOfOrNull{it.expiry}
+                                Text(when(firstExpiry){today->"Expires today — use existing batch first";today.plusDays(1)->"Expires tomorrow — use existing batch first";else->"Expires within 3 days — use existing batch first"},style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.Bold,color=tone)
                                 Text("${reviewAmount(suggestion.expiring,item.unit)} expires within 3 days.${if(suggestion.urgent>0) " ${reviewAmount(suggestion.urgent,item.unit)} expires today or tomorrow." else ""} Reduce buying only if you can use it in time.",style=MaterialTheme.typography.bodySmall,color=tone)
                             }
                         }
@@ -1031,17 +1036,8 @@ private fun ShoppingCalendar(label:String,date:LocalDate?,earliest:LocalDate?=nu
             ShoppingActionIcon(expanded=calendarOpen)
         }
     }
-    if(calendarOpen) {
-        val picker=rememberDatePickerState(initialSelectedDateMillis=utc(date ?: LocalDate.now()),selectableDates=object:SelectableDates {
-            override fun isSelectableDate(utcTimeMillis:Long):Boolean {
-                val selected=day(utcTimeMillis)
-                return (earliest==null||!selected.isBefore(earliest)) && (latest==null||!selected.isAfter(latest))
-            }
-        })
-        DatePickerDialog(onDismissRequest={calendarOpen=false},confirmButton={
-            TextButton(enabled=picker.selectedDateMillis!=null && picker.selectableDates.isSelectableDate(picker.selectedDateMillis ?: 0L),onClick={picker.selectedDateMillis?.let{onDate(day(it))};calendarOpen=false}) { Text("OK") }
-        },dismissButton={TextButton(onClick={calendarOpen=false}){Text("Cancel")}}) { DatePicker(state=picker) }
-    }
+    if(calendarOpen)com.example.smartpantry.ui.theme.SmartPantryDateDialog(label,date?:LocalDate.now(),earliest,latest,onDismiss={calendarOpen=false},onDate=onDate)
+
 }
 
 @Composable
@@ -1089,135 +1085,47 @@ private fun ShoppingIngredientPicker(
     var expanded by rememberSaveable { mutableStateOf(false) }
     var creatingCustom by rememberSaveable { mutableStateOf(false) }
     var customName by rememberSaveable { mutableStateOf("") }
+    var customUnit by rememberSaveable{mutableStateOf("pcs")}
     var customPhoto by rememberSaveable { mutableStateOf<String?>(null) }
     var photoError by rememberSaveable { mutableStateOf(false) }
+    var photoLoading by remember { mutableStateOf(false) }
 
     val photoScope=rememberCoroutineScope()
     val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if(uri!=null)photoScope.launch {
-            try { customPhoto=Uri.fromFile(java.io.File(CommunityRepository().importImage(context,uri))).toString();photoError=false } catch(cancelled:CancellationException){throw cancelled} catch(error:Exception){photoError=true}
+            photoLoading=true
+            try { customPhoto=Uri.fromFile(java.io.File(CommunityRepository().importImage(context,uri))).toString();photoError=false } catch(cancelled:CancellationException){throw cancelled} catch(error:Exception){photoError=true}finally{photoLoading=false}
         }
     }
 
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = { input ->
-                if (input.length <= 50 && input.none { it == '\n' || it == '\r' }) {
-                    query = input
-                    onSelection(null)
-                    expanded = true
-                }
-            },
-            label = { Text("Ingredient") },
-            placeholder = { Text("Search ingredients") },
-            trailingIcon = {
-                IconButton(onClick = { expanded = !expanded }) {
-                    ShoppingActionIcon(expanded = expanded)
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
+    val customCamera=com.example.smartpantry.hardware.rememberCameraCapture{uri->photoScope.launch{
+        photoLoading=true
+        try{customPhoto=Uri.fromFile(java.io.File(CommunityRepository().importImage(context,uri))).toString();photoError=false}catch(cancelled:CancellationException){throw cancelled}catch(_:Exception){photoError=true}finally{photoLoading=false}
+    }}
+    com.example.smartpantry.ui.theme.IngredientPickerField(
+        query=query,onQuery={query=it;onSelection(null);expanded=true},expanded=expanded,onExpanded={expanded=it},
+        choices=catalog.mapIndexed{i,row->com.example.smartpantry.ui.theme.IngredientChoice(i.toString(),row.name)},selectedKey=catalog.indexOfFirst{it.name.equals(selected?.name,true)}.takeIf{it>=0}?.toString(),
+        onSelect={choice->val entry=catalog[choice.key.toInt()];query=entry.name;onSelection(entry);expanded=false},
+        onCustom={customName=query.trim();customUnit=selected?.unit?:"pcs";customPhoto=null;photoError=false;expanded=false;creatingCustom=true},
+        thumbnail={choice->FoodThumbnail(catalog[choice.key.toInt()],32)}
+    )
 
-        val matches = catalog.filter {
-            it.name.startsWith(query.trim(), ignoreCase = true)
-        }
-
-        if (expanded) {
-            ShoppingPanel {
-                if (matches.isEmpty()) {
-                    Text("No matching ingredients", style = MaterialTheme.typography.bodySmall)
-                } else {
-                    Column(Modifier.heightIn(max = 156.dp).verticalScroll(rememberScrollState())) {
-                        matches.forEach { entry ->
-                            DropdownMenuItem(
-                                text = { Text(entry.name) },
-                                leadingIcon = { FoodThumbnail(entry, 32) },
-                                onClick = {
-                                    query = entry.name
-                                    onSelection(entry)
-                                    expanded = false
-                                }
-                            )
-                        }
-                    }
-                    HorizontalDivider()
-                }
-                TextButton(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = {
-                        customName = query.trim()
-                        customPhoto = null
-                        photoError = false
-                        expanded = false
-                        creatingCustom = true
-                    }
-                ) { Text("+ Other · Add custom ingredient") }
-            }
-        }
-    }
-
-    if (creatingCustom) {
-        val name = customName.trim()
-        val alreadyExists = catalog.any { it.name.equals(name, ignoreCase = true) }
-
-        AlertDialog(
-            onDismissRequest = { creatingCustom = false },
-            title = { Text("Add custom ingredient") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = customName,
-                        onValueChange = { input ->
-                            if (input.length <= 50 && input.none { it == '\n' || it == '\r' }) {
-                                customName = input
-                            }
-                        },
-                        label = { Text("Ingredient name") },
-                        singleLine = true,
-                        isError = alreadyExists,
-                        supportingText = {
-                            Text(
-                                if (alreadyExists) "Already in your ingredient list"
-                                else "${customName.length} / 50 characters"
-                            )
-                        }
-                    )
-                    TextButton(onClick = { photoPicker.launch(arrayOf("image/*")) }) {
-                        Icon(Icons.Default.PhotoLibrary,null,Modifier.size(20.dp));Spacer(Modifier.width(6.dp))
-                        Text(if (customPhoto == null) "Add photo (optional)" else "Change photo")
-                    }
-                    if (customPhoto != null) {
-                        ShoppingCustomPhoto(customPhoto, Modifier.size(56.dp))
-                        TextButton(onClick = { customPhoto = null }) {
-                            Icon(Icons.Default.DeleteOutline,null,Modifier.size(20.dp));Spacer(Modifier.width(6.dp));Text("Remove photo")
-                        }
-                    }
-                    if (photoError) {
-                        Text("Couldn't keep access to this photo. Choose another or continue without it.")
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    enabled = name.isNotEmpty() && !alreadyExists,
-                    onClick = {
-                        query = name
-                        onSelection(ListItem(0, name, 1.0, "pcs", photoUri = customPhoto))
-                        creatingCustom = false
-                    }
-                ) {
-                    Text("Use ingredient")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { creatingCustom = false }) {
-                    Text("Cancel")
-                }
+    if(creatingCustom){
+        val name=customName.trim()
+        val existing=catalog.firstOrNull{it.name.equals(name,true)}
+        com.example.smartpantry.ui.theme.CustomIngredientSheet(
+            name=customName,onName={customName=it},unit=customUnit,onUnit={customUnit=it},units=shoppingUnits,busy=photoLoading,error=null,
+            explanation=if(existing!=null)"Already in your list. Use ingredient will select the existing entry." else "Adds a custom ingredient to your shopping item. Pantry stock is unchanged.",
+            onDismiss={creatingCustom=false},onConfirm={val chosen=existing?:ListItem(0,name,1.0,customUnit,photoUri=customPhoto);query=chosen.name;onSelection(chosen);creatingCustom=false},
+            extra={
+                com.example.smartpantry.ui.theme.IngredientPhotoActions(customPhoto.orEmpty(),photoLoading,
+                    onCamera={try{customCamera()}catch(_:Exception){photoError=true}},
+                    onPhotos={photoPicker.launch(arrayOf("image/*"))},onRemove={customPhoto=null})
+                if(photoError)Text("Could not open this photo. Choose another or continue without it.",color=MaterialTheme.colorScheme.error)
             }
         )
     }
+
 }
 
 @Composable
