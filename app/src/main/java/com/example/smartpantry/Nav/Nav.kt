@@ -42,6 +42,9 @@ import com.example.smartpantry.Screen.Admin.AdminScreen
 import com.example.smartpantry.Screen.Auth.CreateAccountScreen
 import com.example.smartpantry.Screen.Auth.LoginScreen
 import com.example.smartpantry.Screen.Auth.ResetPasswordScreen
+import com.example.smartpantry.Screen.FoodLog.FoodLogAnalysisScreen
+import com.example.smartpantry.Screen.FoodLog.FoodLogScreen
+import com.example.smartpantry.Screen.FoodLog.FoodLogViewModel
 import com.example.smartpantry.Screen.IngredientUI.CreateIngredientScreen
 import com.example.smartpantry.Screen.IngredientUI.EditIngredientScreen
 import com.example.smartpantry.Screen.IngredientUI.EditInventoryScreen
@@ -114,6 +117,8 @@ fun AppNavHost(
     val adminVm: AdminViewModel = viewModel()
     val profileViewModel: ProfileViewModel = viewModel()
     val profile by profileViewModel.profile.collectAsState()
+
+    val foodLogVm: FoodLogViewModel = viewModel()
 
     val ingredientVm: IngredientViewModel = viewModel()
     val recipeVm: recipe_vm = viewModel()
@@ -348,7 +353,20 @@ fun AppNavHost(
                 )
             }
 
-            composable("records") { UserDashboardScreen() }
+            composable("foodLog") {
+                FoodLogScreen(
+                    vm = foodLogVm,
+                    onAnalysis = { navController.navigate("foodAnalysis") }
+                )
+            }
+            composable("foodAnalysis") {
+                FoodLogAnalysisScreen(
+                    vm = foodLogVm,
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
+            navController.navigate("foodLog")
 
             composable("admin") {
                 if (profile?.role == "admin") {
