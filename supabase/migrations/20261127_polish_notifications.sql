@@ -115,10 +115,12 @@ BEGIN
   RETURN result||jsonb_build_object('published',EXISTS(SELECT 1 FROM public.recipe_post WHERE recipe_id=(p_payload->>'recipeId')::bigint AND user_id=uid AND recipe_post_status='published'));
  ELSIF p_action='dashboard' THEN
   result:=public.community_v5('dashboard',p_payload);
-  RETURN result||jsonb_build_object('wasteRate',coalesce((SELECT round(100.0*sum(wasted)/nullif(sum(total),0),1) FROM (
-   SELECT count(*) wasted,count(*) total FROM public.waste_log WHERE user_id=uid AND record_type='Wasted' AND record_date BETWEEN date_trunc('week',now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date AND (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date
-   UNION ALL SELECT 0,count(*) FROM public.food_log WHERE user_id=uid AND record_type='Consumed' AND record_date BETWEEN date_trunc('week',now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date AND (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date
-  ) counts),0));
+  RETURN result||jsonb_build_object('wasteRate',coalesce((
+   SELECT round(100.0*count(*) FILTER (WHERE record_type='Wasted')/nullif(count(*),0),1)
+   FROM public.food_log WHERE user_id=uid AND record_type IN ('Consumed','Wasted')
+    AND record_date BETWEEN date_trunc('week',now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date AND (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date
+  ),0));
+
  END IF;
  RETURN public.community_v5(p_action,p_payload);
 END $$;

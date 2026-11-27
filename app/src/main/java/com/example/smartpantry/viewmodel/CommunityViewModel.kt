@@ -7,7 +7,6 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.example.smartpantry.Aipackage.GroqDraftRepository
 import com.example.smartpantry.Screen.CommunityScreen.cleanInput
-import com.example.smartpantry.Screen.CommunityScreenpackage.RecipeDraftHelper
 import com.example.smartpantry.community.DraftIngredient
 import com.example.smartpantry.community.RecipeDraft
 import com.example.smartpantry.community.flag
@@ -18,6 +17,8 @@ import com.example.smartpantry.community.rows
 import com.example.smartpantry.community.str
 import com.example.smartpantry.community.words
 import com.example.smartpantry.remote.CommunityRepository
+import com.example.smartpantry.model.Ingredient
+import com.example.smartpantry.storage.remote.createIngredient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -66,6 +67,24 @@ internal class CommunityViewModel(application: Application, private val saved: S
     }
     private var loadJob: Job? = null
     private var detailJob: Job? = null
+    private val _privateNeeds = MutableStateFlow<List<JsonObject>>(emptyList())
+    val privateNeeds = _privateNeeds.asStateFlow()
+    private var privateNeedsJob: Job? = null
+
+    fun loadPrivateNeeds(recipeId: Long, keepVisible: Boolean = false) {
+        privateNeedsJob?.cancel()
+        if (!keepVisible) _privateNeeds.value = emptyList()
+        privateNeedsJob = viewModelScope.launch {
+            try {
+                val owner = repo.userId()
+                val result = repo.call("personal_needs", buildJsonObject { put("recipeId", recipeId) })
+                if (repo.userId() == owner) _privateNeeds.value = result.rows("ingredients")
+            } catch (t: Throwable) {
+                failure(t)
+            }
+        }
+    }
+
     private var page = 0
     private var activeMode = "feed"; private var activeSearch = ""; private var activeCategory = "All"
     private var boundUser: String? = null
@@ -84,7 +103,8 @@ internal class CommunityViewModel(application: Application, private val saved: S
             val savedOwner: String? = saved["draftOwner"]
             if (savedOwner != null && savedOwner != id) editDraft(RecipeDraft())
             saved["draftOwner"] = id
-            _posts.value = emptyList(); _catalog.value = emptyList(); _mine.value = emptyList(); _detail.value = null
+            clearRecipePreview(); _posts.value = emptyList(); _catalog.value = emptyList(); _mine.value = emptyList(); _detail.value = null
+            _privateNeeds.value = emptyList()
             _recommendations.value=emptyList();_pantryEmpty.value=false;_feedFailed.value=false
             boundUser = id
         }
@@ -108,8 +128,8 @@ internal class CommunityViewModel(application: Application, private val saved: S
             finally { if(kotlin.coroutines.coroutineContext[Job]?.isActive==true)_loading.value=false }
         }
     }
-    fun loadDetail(id: Long) {
-        detailJob?.cancel(); _detail.value = null
+    fun loadDetail(id: Long, keepVisible: Boolean = false) {
+        detailJob?.cancel(); if (!keepVisible) _detail.value = null
         detailJob = viewModelScope.launch {
             _loading.value = true
             try { _detail.value = repo.call("detail", buildJsonObject { put("postId", id) }) }
@@ -134,6 +154,36 @@ internal class CommunityViewModel(application: Application, private val saved: S
         }
     }
     private suspend fun refreshCatalog() { val data = repo.call("catalog"); _catalog.value = data.rows("ingredients"); _mine.value = data.rows("recipes") }
+    fun createRecipeIngredient(name: String, unit: String, category: String, done: (DraftIngredient) -> Unit) = mutate {
+        val owner = repo.userId()
+        val trimmed = name.trim()
+        require(trimmed.length in 1..50 && trimmed.none { it.isISOControl() }) {
+            "Enter an ingredient name with 1–50 characters on one line."
+        }
+        require(unit in com.example.smartpantry.community.recipeUnits) { "Choose a supported unit." }
+        refreshCatalog()
+        check(repo.userId() == owner) { "Please reopen this page after switching accounts." }
+        val existing = _catalog.value.firstOrNull { it.str("name").trim().equals(trimmed, ignoreCase = true) }
+        if (existing != null) {
+            done(DraftIngredient(existing.long("id"), existing.str("name"), unit = unit, image = existing.str("image")))
+            return@mutate
+        }
+        val now = System.currentTimeMillis()
+        val created = createIngredient(Ingredient(
+            ingredientName = trimmed, unit = unit, category = category, userId = owner,
+            isPublish = false, createAt = now, updateAt = now
+        ))
+        check(repo.userId() == owner) { "Please reopen this page after switching accounts." }
+        val id = checkNotNull(created.ingredientId) { "The server did not return an ingredient ID. Refresh the catalogue before retrying." }
+        _catalog.value = (_catalog.value + buildJsonObject {
+            put("id", id)
+            put("name", created.ingredientName)
+            put("unit", unit)
+            put("image", created.image.orEmpty())
+        }).distinctBy { it.long("id") }
+        done(DraftIngredient(id, created.ingredientName, unit = unit, image = created.image.orEmpty()))
+    }
+
     fun openDraft(id: Long, ready: () -> Unit) = mutate {
         val r = repo.call("draft", buildJsonObject { put("recipeId", id) })
         editDraft(RecipeDraft(recipeId=id,title=r.str("title"),category=r.str("category","Malaysian"),description=cleanInput(r.str("description"),5000),image=r.str("image"),vegan=r.flag("vegan"),
@@ -168,7 +218,7 @@ internal class CommunityViewModel(application: Application, private val saved: S
             })
             val id = result.long("recipeId"); check(id > 0) { "Recipe could not be saved." }
             editDraft(value.copy(recipeId=id,requestId=UUID.randomUUID().toString()))
-            refreshCatalog(); _notice.value = if(value.publish)"Recipe saved and published." else "Recipe saved in My recipes."; done(id)
+            _notice.value = if(value.publish)"Recipe saved and published." else "Recipe saved in My recipes."; done(id); feed(keepVisible=true)
         }
     }
     fun deletePersonal(id:Long,done:()->Unit)=mutate {
@@ -187,46 +237,41 @@ internal class CommunityViewModel(application: Application, private val saved: S
         repo.call("unpublish",buildJsonObject { put("postId",postId) }); refreshCatalog(); _notice.value="Removed from community. Your personal recipe is kept."; done()
     }
     fun action(action: String, postId: Long, extra: JsonObject = buildJsonObject {}, done: () -> Unit = {}) = mutate {
-        val data = repo.call(action,buildJsonObject { put("postId",postId); extra.forEach { (k,v)->put(k,v) } })
-        if(action=="add_missing") _notice.value = if(data.long("added")==0L) "Everything needed is already in your pantry or shopping list." else "${data.long("added")} missing ingredients added to your shopping list."
-        if(_detail.value?.get("post")?.jsonObject?.long("id")==postId) {
-            _detail.value=repo.call("detail",buildJsonObject { put("postId",postId) })
+        val data = repo.call(action, buildJsonObject {
+            put("postId", postId)
+            extra.forEach { (key, value) -> put(key, value) }
+        })
+        if (action == "add_missing") {
+            _notice.value = if (data.long("added") == 0L) "Everything needed is already in your pantry or shopping list."
+            else "${data.long("added")} missing ingredients added to your shopping list."
         }
-        if(action=="favourite") _posts.value=_posts.value.map { row -> if(row.long("id")==postId) buildJsonObject { row.forEach { (k,v)->put(k,v) }; put("favourite",extra.flag("enabled")) } else row }
+        if (action == "favourite") _posts.value = _posts.value.map { row ->
+            if (row.long("id") != postId) row else buildJsonObject {
+                row.forEach { (key, value) -> put(key, value) }
+                put("favourite", extra.flag("enabled"))
+            }
+        }
+        val showingPost = postId > 0 && _detail.value?.get("post")?.jsonObject?.long("id") == postId
         done()
+        if (showingPost) loadDetail(postId, keepVisible = true)
+        if (action == "add_missing" && postId == 0L) loadPrivateNeeds(extra.long("recipeId"), keepVisible = true)
     }
-    private val _preparing=MutableStateFlow(false);val preparing=_preparing.asStateFlow()
-    private var prepareJob:Job?=null
-    fun cancelPrepare(){prepareJob?.cancel()}
-    fun prepareByName(name:String,mode:String="AI",servings:Int=2,dietary:String="Unspecified",done:()->Unit){
-        if(_busy.value)return
-        _busy.value=true;_preparing.value=true;_error.value=null
-        prepareJob=viewModelScope.launch{
-            try{
-                val owner=userId;val original=_draft.value
-                val query=name.trim()
-                require(query.length in 1..150 && !query.contains('\n') && !query.contains('\r')){"Enter a dish name with 1–150 characters on one line."}
-                require(servings in 1..12){"Choose 1–12 servings."}
-                try{refreshCatalog()}catch(t:Exception){
-                    if(t is CancellationException)throw t
-                    if(!com.example.smartpantry.core.isConnectionFailure(t))throw t
-                    if(mode=="AI")throw IllegalStateException("Cannot load the ingredient catalogue. Check your connection; your current form is unchanged.")
-                    if(_catalog.value.isEmpty())_catalog.value=com.example.smartpantry.storage.remote.ShoppingRepository(getApplication()).catalog(true).mapNotNull{row->row.ingredientId?.let{id->buildJsonObject{put("id",id);put("name",row.ingredientName);put("unit",row.unit.orEmpty());put("image",row.image.orEmpty())}}}
-                }
-                require(_catalog.value.isNotEmpty()){"No saved ingredient catalogue is available. Connect once to load it."}
-                val generated=if(mode=="AI")GroqDraftRepository().create(query,_catalog.value,servings,dietary) else {
-                    val template=RecipeDraftHelper.create(query,_catalog.value)
-                    template.copy(ingredients=template.ingredients.map{row->val q=row.quantity.toDouble()*servings/2.0;row.copy(quantity=quantityText(if(row.unit in listOf("pcs","bag","carton","bunch"))kotlin.math.ceil(q)else q))},
-                        source="Built-in recipe template · $servings servings · Review quantities before saving")
-                }
-                check(userId==owner){"Please reopen this page after switching accounts."}
-                // Replacing the form is explicit, while editing a saved recipe keeps its identity and visibility.
-                editDraft(generated.copy(recipeId=original.recipeId,publish=original.publish,wasPublished=original.wasPublished))
-                _notice.value=if(mode=="AI")"AI draft ready. Review all details before saving." else "Template ready. No AI request was made."
-                done()
-            }catch(cancelled:CancellationException){throw cancelled}catch(t:Throwable){failure(t)}finally{_busy.value=false;_preparing.value=false}
-        }
+    private val _preparing = MutableStateFlow(false)
+    val preparing = _preparing.asStateFlow()
+    private val _preview = MutableStateFlow<RecipeDraft?>(null)
+    val preview = _preview.asStateFlow()
+    private var prepareJob: Job? = null
+
+    fun cancelPrepare() { prepareJob?.cancel() }
+    fun clearRecipePreview() { _preview.value = null }
+
+    fun applyRecipePreview() {
+        val generated = _preview.value ?: return
+        val original = _draft.value
+        editDraft(generated.copy(recipeId = original.recipeId, publish = original.publish, wasPublished = original.wasPublished))
+        clearRecipePreview()
     }
+
     private fun JsonObject.long(key: String): Long {
         return this[key]?.jsonPrimitive?.long ?: 0L
     }

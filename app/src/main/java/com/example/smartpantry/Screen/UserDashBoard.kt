@@ -83,6 +83,13 @@ internal fun displayAmount(q:Double,u:String):String {
      Text(if(data.isEmpty())"Pantry stock unavailable" else "${pantry.map{it.long("ingredientId")}.filter{it>0}.distinct().size} ingredients · ${pantry.size} batches",Modifier.weight(1f),style=MaterialTheme.typography.bodySmall,fontWeight=FontWeight.Medium)
      Icon(Icons.Default.ChevronRight,"View pantry",Modifier.size(24.dp),tint=c.primary)
     }}}
+    item{Spacer(Modifier.height(3.dp));Surface(Modifier.fillMaxWidth().clickable(onClick=onShoppingList),shape=RoundedCornerShape(16.dp),color=c.surfaceContainerLow,border=androidx.compose.foundation.BorderStroke(1.dp,c.outlineVariant)){
+     Row(Modifier.padding(13.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
+      Icon(Icons.Default.ShoppingBasket,null,Modifier.size(28.dp),tint=c.primary)
+      Column(Modifier.weight(1f)){Text("Shopping list",fontWeight=FontWeight.Bold);Text(if(data.isEmpty())"Open your list" else "${data.long("toBuy")} to buy · ${data.long("purchased")} purchased",style=MaterialTheme.typography.bodySmall,color=c.onSurfaceVariant)}
+      Icon(Icons.Default.ChevronRight,"Open shopping list",Modifier.size(24.dp),tint=c.primary)
+     }
+    }}
     item{HomeSectionTitle("Use these first",onPantry)}
     if(soon.isEmpty())item{Text(if(data.isEmpty())"Pull down to load your pantry stock." else "No available stock expires within 3 days.",style=MaterialTheme.typography.bodySmall,color=c.onSurfaceVariant)}
     itemsIndexed(soon,key={_,row->row.long("id")}){index,row->
@@ -104,13 +111,6 @@ internal fun displayAmount(q:Double,u:String):String {
       if(index<soon.lastIndex)HorizontalDivider(color=c.outlineVariant)
      }
     }
-    item{Spacer(Modifier.height(3.dp));Surface(Modifier.fillMaxWidth().clickable(onClick=onShoppingList),shape=RoundedCornerShape(16.dp),color=c.surfaceContainerLow,border=androidx.compose.foundation.BorderStroke(1.dp,c.outlineVariant)){
-     Row(Modifier.padding(13.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
-      Icon(Icons.Default.ShoppingBasket,null,Modifier.size(28.dp),tint=c.primary)
-      Column(Modifier.weight(1f)){Text("Shopping list",fontWeight=FontWeight.Bold);Text(if(data.isEmpty())"Open your list" else "${data.long("toBuy")} to buy · ${data.long("purchased")} purchased",style=MaterialTheme.typography.bodySmall,color=c.onSurfaceVariant)}
-      Icon(Icons.Default.ChevronRight,"Open shopping list",Modifier.size(24.dp),tint=c.primary)
-     }
-    }}
     item{CommunityDiscover(onOpenCommunityPost,onRecipes)}
    }
   }
@@ -121,7 +121,7 @@ internal fun displayAmount(q:Double,u:String):String {
  Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
   Text(title,Modifier.weight(1f),style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold)
   TextButton(onClick=onSeeAll,contentPadding=PaddingValues(start=8.dp,end=0.dp)){
-   Text("See all",style=MaterialTheme.typography.labelLarge);Icon(Icons.Default.ChevronRight,null,Modifier.size(24.dp))
+   Text("See all",style=MaterialTheme.typography.labelLarge)
   }
  }
 }

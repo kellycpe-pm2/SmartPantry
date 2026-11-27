@@ -19,6 +19,12 @@ internal fun userMessage(error: Throwable): String {
     val message = detail.lowercase()
     return when {
         "pantry unavailable" in message -> "Your pantry could not be loaded. Check your connection and pull down to retry. Your saved records have not been removed."
+        "cannot compare shopping units for " in message ->
+            Regex("Cannot compare shopping units for [^\\r\\n]{1,160}?\\. Use a compatible unit or add it manually\\.", RegexOption.IGNORE_CASE)
+                .find(detail)?.value ?: "Use compatible shopping and recipe units, or add the ingredient manually."
+        "combined quantity exceeds shopping limits for " in message ->
+            Regex("The combined quantity exceeds shopping limits for [^\\r\\n]{1,160}?\\. Change the shopping unit or split the quantity manually\\.", RegexOption.IGNORE_CASE)
+                .find(detail)?.value ?: "Change the shopping unit or split the combined quantity."
         "unit" in message && ("compare" in message || "convert" in message) -> "Some pantry and recipe units cannot be compared. Check package sizes and choose compatible units, then retry."
         "pgrst202" in message || "schema cache" in message -> "This feature needs the latest database setup. Ask your project administrator to run the supplied SQL, then retry."
         generateSequence(error){it.cause}.any{it is java.io.FileNotFoundException} || "no content provider" in message -> "The selected photo cannot be opened on this device. Choose the photo again or remove it, then retry."
@@ -32,6 +38,7 @@ internal fun userMessage(error: Throwable): String {
         "check purchase" in message || "expiry date" in message && "check" in message -> "Check both dates: purchase date cannot be in the future, and expiry must be on or after purchase."
         "select pantry" in message -> "Choose a storage location: Pantry, Fridge or Freezer."
         "still referenced" in message -> "This record is still used by other saved records. Update those links before deleting it."
+        "check ingredient quantities and units" in message -> "Check the ingredient selection, its quantity and unit. Refresh the catalogue if the ingredient was removed."
         "23503" in message || "foreign key" in message -> "Some linked information is no longer available. Refresh and select the ingredient or recipe again."
         "does not belong to your account" in message -> "This item is unavailable or belongs to another account. Refresh and open your own item."
         "own recipe" in message || "author" in message && "only" in message -> "Only the author can change this recipe or post. Open your own item or refresh the page."
@@ -41,6 +48,7 @@ internal fun userMessage(error: Throwable): String {
         "already stored" in message -> "This item is already in your pantry. Refresh the list to see its status."
         "no longer exists" in message || "404" in message -> "This item is no longer available. Refresh and try again."
         "ingredient is unavailable" in message -> "This ingredient is no longer available. Choose another ingredient and try again."
+        "23502" in message || "23514" in message -> "A required field is missing or a saved value is outside the allowed range. Check the name, category, quantity and unit."
         "23505" in message || "duplicate key" in message -> "This item already exists. Refresh the list before trying again."
         error is IllegalArgumentException && detail.length <= 240 && !detail.contains("http",true) -> detail
         error is IllegalStateException && detail.length <= 240 && !detail.contains("http",true) && !detail.contains("exception",true) -> detail

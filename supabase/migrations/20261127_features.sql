@@ -9,7 +9,6 @@ ALTER TABLE public."Recipe" ADD COLUMN IF NOT EXISTS dish_type text;
 ALTER TABLE public."Recipe" ADD COLUMN IF NOT EXISTS dietary_preference text;
 CREATE INDEX IF NOT EXISTS pantry_owner_ingredient_expiry ON public."Ingredient_User"(user_id,"ingredientId","expiredDate") WHERE quantity>0;
 CREATE INDEX IF NOT EXISTS recipe_ingredient_lookup ON public."Recipe_Ingredient"("recipeId","ingredientId");
-CREATE INDEX IF NOT EXISTS waste_owner_date ON public.waste_log(user_id,record_date DESC);
 CREATE INDEX IF NOT EXISTS food_owner_date ON public.food_log(user_id,record_date DESC);
 -- Only copy explicit historical information. False is_vegan does NOT imply vegetarian or non-vegetarian.
 UPDATE public."Recipe" SET cuisine="recipeCategory" WHERE cuisine IS NULL AND "recipeCategory" IN ('Malaysian','Chinese','Asian','Western','Other');
@@ -120,26 +119,26 @@ BEGIN
     (to_timestamp(b."expiredDate"/1000.0) AT TIME ZONE 'Asia/Kuala_Lumpur')::date expiry
     FROM public."Ingredient_User" b LEFT JOIN public.ingredient i ON i."ingredientId"=b."ingredientId"
     WHERE b.user_id=uid AND b.quantity>0 ORDER BY b."expiredDate",b."IngredientUser_Id") x),'[]'::jsonb),
-   'waste',coalesce((SELECT jsonb_agg(to_jsonb(x)) FROM (SELECT waste_log_id id,food_name name,food_quantity quantity,unit,record_date date,food_category category,waste_log_notes note
-    FROM public.waste_log WHERE user_id=uid AND record_type='Wasted' ORDER BY record_date DESC,waste_log_id DESC LIMIT 300) x),'[]'::jsonb),
-   'weekCount',(SELECT count(*) FROM public.waste_log WHERE user_id=uid AND record_type='Wasted' AND record_date BETWEEN date_trunc('week',now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date AND (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date),
+   'waste',coalesce((SELECT jsonb_agg(to_jsonb(x)) FROM (SELECT food_log_id id,food_name name,food_quantity quantity,unit,record_date date,food_category category,food_log_notes note
+    FROM public.food_log WHERE user_id=uid AND record_type='Wasted' ORDER BY record_date DESC,food_log_id DESC LIMIT 300) x),'[]'::jsonb),
+   'weekCount',(SELECT count(*) FROM public.food_log WHERE user_id=uid AND record_type='Wasted' AND record_date BETWEEN date_trunc('week',now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date AND (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date),
    'weekWaste',coalesce((SELECT jsonb_agg(to_jsonb(x)) FROM (
     SELECT CASE public.community_unit(unit) WHEN 'kg' THEN 'g' WHEN 'L' THEN 'mL' ELSE public.community_unit(unit) END unit,
       sum(CASE WHEN public.community_unit(unit) IN ('kg','L') THEN food_quantity*1000 ELSE food_quantity END) quantity
-    FROM public.waste_log WHERE user_id=uid AND record_type='Wasted' AND food_quantity::text NOT IN ('NaN','Infinity','-Infinity')
+    FROM public.food_log WHERE user_id=uid AND record_type='Wasted' AND food_quantity::text NOT IN ('NaN','Infinity','-Infinity')
       AND record_date BETWEEN date_trunc('week',now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date AND (now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date
     GROUP BY CASE public.community_unit(unit) WHEN 'kg' THEN 'g' WHEN 'L' THEN 'mL' ELSE public.community_unit(unit) END
    )x),'[]'::jsonb),
    'toBuy',(SELECT count(*) FROM public.shopping_list_items WHERE user_id=uid AND NOT is_purchased),
    'purchased',(SELECT count(*) FROM public.shopping_list_items WHERE user_id=uid AND is_purchased));
  ELSIF p_action='logs' THEN
-  IF (p_payload->>'start')::date>(p_payload->>'end')::date OR (p_payload->>'end')::date>(now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date THEN RAISE EXCEPTION 'Choose a start date on or before the end date, and no future dates.'; END IF;
+  IF (p_payload->>'start') IS NULL OR (p_payload->>'end') IS NULL OR (p_payload->>'start')::date>(p_payload->>'end')::date OR (p_payload->>'end')::date>(now() AT TIME ZONE 'Asia/Kuala_Lumpur')::date THEN RAISE EXCEPTION 'Choose a start date on or before the end date, and no future dates.'; END IF;
   WITH entries AS MATERIALIZED (
-   SELECT 'waste_'||waste_log_id id,'Wasted' type,food_name name,food_quantity quantity,unit,record_date date,waste_log_notes note
-   FROM public.waste_log WHERE user_id=uid AND record_type='Wasted' AND record_date BETWEEN (p_payload->>'start')::date AND (p_payload->>'end')::date
-   UNION ALL
-   SELECT 'food_'||food_log_id id,'Consumed' type,food_name name,food_quantity quantity,unit,record_date date,food_log_notes note
-   FROM public.food_log WHERE user_id=uid AND record_type='Consumed' AND record_date BETWEEN (p_payload->>'start')::date AND (p_payload->>'end')::date
+   SELECT food_log_id::text id,record_type type,food_name name,food_quantity quantity,unit,
+    record_date date,food_log_notes note,food_category category,ingredient_user_id "ingredientUserId",
+    is_auto "isAuto",wasted_cost "wastedCost"
+   FROM public.food_log WHERE user_id=uid AND record_type IN ('Consumed','Wasted')
+    AND record_date BETWEEN (p_payload->>'start')::date AND (p_payload->>'end')::date
   ), amounts AS (
    SELECT type,CASE public.community_unit(unit) WHEN 'kg' THEN 'g' WHEN 'L' THEN 'mL' ELSE public.community_unit(unit) END unit,
     sum(CASE WHEN public.community_unit(unit) IN ('kg','L') THEN quantity*1000 ELSE quantity END) quantity

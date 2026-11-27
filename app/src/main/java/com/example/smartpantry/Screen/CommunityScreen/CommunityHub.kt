@@ -59,8 +59,11 @@ internal fun CommunityHub(vm:CommunityViewModel,mode:String,search:String,onSear
   Column {
    AnimatedVisibility(visible=showTools || mode!="post") {
     Column(Modifier.fillMaxWidth().padding(horizontal=18.dp,vertical=4.dp)) {
-     OutlinedTextField(search,{onSearch(it.take(80))},Modifier.fillMaxWidth(),singleLine=true,placeholder={Text("Search recipes or ingredients")},
+     Row(verticalAlignment=Alignment.CenterVertically) {
+     OutlinedTextField(search,{onSearch(it.take(80))},Modifier.weight(1f),singleLine=true,placeholder={Text("Search recipes or ingredients")},
       leadingIcon={Icon(Icons.Default.Search,null)},trailingIcon={if(search.isNotBlank())IconButton(onClick={onSearch("")}){Icon(Icons.Default.Close,"Clear search")}},shape=RoundedCornerShape(16.dp))
+      if(mode=="saved") IconButton(onClick={filterOpen=true}) { Icon(Icons.Default.Tune,"Filter favourites",tint=c.primary) }
+     }
      if(mode=="post") Row(verticalAlignment=Alignment.CenterVertically) {
       Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
        listOf("All","Malaysian","Malay","Chinese","Indian","Halal").forEach { label->FilterChip(selected=category==label && (label!="All" || filters.isEmpty()),onClick={onCategory(label)},label={Text(label)}) }
@@ -70,7 +73,7 @@ internal fun CommunityHub(vm:CommunityViewModel,mode:String,search:String,onSear
      if(mode=="personal")Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
       listOf("All","Published","Private").forEach{label->FilterChip(selected=publication==label,onClick={publication=label},label={Text(label)})}
      }
-     if(mode=="post" && filters.isNotEmpty())Text("Filters: "+filters.entries.joinToString(" · "){it.value.jsonPrimitive.content},style=MaterialTheme.typography.labelSmall,color=c.primary)
+     if(mode in setOf("post","saved") && filters.isNotEmpty())Text("Filters: "+filters.entries.joinToString(" · "){it.value.jsonPrimitive.content},style=MaterialTheme.typography.labelSmall,color=c.primary)
     }
    }
    PullToRefreshBox(isRefreshing=loading || recLoading,onRefresh={vm.feed(if(mode=="saved")"saved" else "feed",search,category,keepVisible=true,filters=filters);vm.loadRecommendations(if(mode=="for_me")search else "")}) {

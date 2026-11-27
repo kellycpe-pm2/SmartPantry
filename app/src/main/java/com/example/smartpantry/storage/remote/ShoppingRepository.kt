@@ -109,7 +109,8 @@ internal class ShoppingRepository(
         if(cacheOnly || offline) return@withContext cached("items",emptyList())
         mutex.withLock {
             try {
-                var rows = supabase.from("shopping_list_items").select { filter { eq("user_id",owner) } }.decodeList<RemoteShoppingItem>()
+                val remote = CommunityRepository().call("shopping_items")
+                var rows = codec.decodeFromJsonElement<List<RemoteShoppingItem>>(remote["rows"] ?: JsonArray(emptyList()))
                 pending().forEach { op -> rows=rows.filterNot{it.id==op.item.id} + if(op.action=="save") listOf(op.item) else emptyList() }
                 checkOwner();store("items",rows.sortedBy{it.id}); rows.sortedBy{it.id}
             } catch(e: Exception) { if(!isConnectionFailure(e))throw e;offline=true;cached("items",emptyList()) }

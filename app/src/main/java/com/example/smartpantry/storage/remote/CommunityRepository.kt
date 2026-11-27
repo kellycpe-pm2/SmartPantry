@@ -24,7 +24,7 @@ internal class CommunityRepository {
     suspend fun call(action: String, payload: JsonObject = buildJsonObject {}): JsonObject = withContext(Dispatchers.IO) {
         supabase.auth.sessionStatus.first { it !is SessionStatus.Initializing }
         userId()
-        val response = supabase.postgrest.rpc(if(action in setOf("feed","draft","save_recipe","catalog")) "community_v6" else "community_api", buildJsonObject {
+        val response = supabase.postgrest.rpc(if(action in setOf("feed","draft","save_recipe","catalog","detail","add_missing","personal_needs","shopping_items")) "community_v6" else "community_api", buildJsonObject {
             put("p_action", action); put("p_payload", payload)
         })
         Json.parseToJsonElement(response.data) as? JsonObject ?: error("The server returned an unexpected response.")
