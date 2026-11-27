@@ -211,7 +211,7 @@ fun EditIngredientScreen(
 
             OutlinedTextField(
                 value = description,
-                onValueChange = { description = it.take(1000) },
+                onValueChange = { description = com.example.smartpantry.Screen.CommunityScreen.cleanInput(it,1000,8) },
                 label = { Text("Storage notes & description (optional)") },
                 supportingText = { Text("${description.length}/1000") },
                 modifier = Modifier.fillMaxWidth(),

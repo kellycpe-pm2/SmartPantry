@@ -58,6 +58,13 @@ internal class ShoppingRepository(
         private set
     val pendingCount: Int get() = pending().size
     val hasCache: Boolean get() = prefs.contains("items")
+    val hasPantryCache: Boolean get() = prefs.contains("pantry")
+    val pantryUpdatedAt: Long get() = prefs.getLong("updated_pantry",0L)
+    fun reviewDecision(id: Long): String? = prefs.getString("review_$id",null)
+    fun rememberReview(id: Long, fingerprint: String) {
+        checkOwner()
+        check(prefs.edit().putString("review_$id",fingerprint).commit()) { "Could not save your review decision. Please retry." }
+    }
     fun beginRefresh() { checkOwner(); offline = false }
     private fun connected(): Boolean = networkAvailable?.invoke() ?: try {
         val manager=app.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
@@ -67,13 +74,18 @@ internal class ShoppingRepository(
     private inline fun <reified T> cached(key: String, fallback: T): T =
         prefs.getString(key, null)?.let { codec.decodeFromString<T>(it) } ?: fallback
     private inline fun <reified T> store(key: String, value: T) {
-        check(prefs.edit().putString(key, codec.encodeToString(value)).commit()) { "Could not save on this device. Free up storage and retry." }
+        val editor=prefs.edit().putString(key, codec.encodeToString(value))
+        if(key=="pantry") editor.putLong("updated_pantry",System.currentTimeMillis())
+        check(editor.commit()) { "Could not save on this device. Free up storage and retry." }
     }
     private fun pending(): List<ShoppingPending> = cached("pending", emptyList())
     private fun commit(rows: List<RemoteShoppingItem>, queue: List<ShoppingPending>, resolved: Pair<Long,Long>? = null, localCatalog: List<RemoteShoppingItem>? = null) {
         val editor=prefs.edit().putString("items",codec.encodeToString(rows)).putString("pending",codec.encodeToString(queue))
         localCatalog?.let { editor.putString("local_catalog",codec.encodeToString(it)) }
-        resolved?.let { editor.putLong("resolved_${it.first}",it.second) }
+        resolved?.let {
+            editor.putLong("resolved_${it.first}",it.second)
+            prefs.getString("review_${it.first}",null)?.let { decision -> editor.putString("review_${it.second}",decision).remove("review_${it.first}") }
+        }
         check(editor.commit()) { "Could not save on this device. Free up storage and retry." }
     }
     private suspend inline fun <reified T> read(key: String, fallback: T, cacheOnly: Boolean, crossinline fetch: suspend () -> T): T = withContext(Dispatchers.IO) {
@@ -89,7 +101,7 @@ internal class ShoppingRepository(
     private fun userId() = account()
     private suspend fun rpc(action:String,payload:JsonObject=buildJsonObject{}):JsonObject = withContext(Dispatchers.IO) {
         checkOwner()
-        Json.parseToJsonElement(supabase.postgrest.rpc("shopping_api",buildJsonObject{put("p_action",action);put("p_payload",buildJsonObject{payload.forEach{(k,v)->put(k,v)};put("owner_id",owner)})}).data).jsonObject
+        Json.parseToJsonElement(supabase.postgrest.rpc(if(action=="transfer")"shopping_v5" else "shopping_api",buildJsonObject{put("p_action",action);put("p_payload",buildJsonObject{payload.forEach{(k,v)->put(k,v)};put("owner_id",owner)})}).data).jsonObject
     }
     suspend fun items(cacheOnly: Boolean = false): List<RemoteShoppingItem> = withContext(Dispatchers.IO) {
         checkOwner()
@@ -189,7 +201,7 @@ internal class ShoppingRepository(
         return codec.decodeFromJsonElement(rpc("save",payload))
     }
     /** Resolve and sync THIS item; unrelated pending rows must not prevent a transfer. */
-    suspend fun transfer(id:Long,name:String,quantity:Double,unit:String,purchaseDate:String,expiryDate:String,note:String,photo:String?):Long = withContext(Dispatchers.IO) {
+    suspend fun transfer(id:Long,name:String,quantity:Double,unit:String,purchaseDate:String,expiryDate:String,note:String,photo:String?,location:String="Pantry"):Long = withContext(Dispatchers.IO) {
         checkOwner()
         mutex.withLock {
             // A real server request is authoritative; a stale UI offline flag is not.
@@ -201,7 +213,7 @@ internal class ShoppingRepository(
                 ?: error("This shopping item is no longer available. Refresh your list.")
             require(row.isPurchased) { "Mark this item Purchased before adding it to the pantry." }
             val uploaded=uploadPhoto(app,photo)
-            rpc("transfer",buildJsonObject{put("id",serverId);put("name",name);put("quantity",quantity);put("unit",unit);put("purchase_date",purchaseDate);put("expiry_date",expiryDate);put("note",note);put("photo_path",uploaded?.let(::JsonPrimitive) ?: JsonNull)})
+            rpc("transfer",buildJsonObject{put("id",serverId);put("name",name);put("quantity",quantity);put("unit",unit);put("purchase_date",purchaseDate);put("expiry_date",expiryDate);put("location",location);put("note",note);put("photo_path",uploaded?.let(::JsonPrimitive) ?: JsonNull)})
             checkOwner()
             store("stored",cached<Set<Long>>("stored",emptySet())+serverId)
             offline=false

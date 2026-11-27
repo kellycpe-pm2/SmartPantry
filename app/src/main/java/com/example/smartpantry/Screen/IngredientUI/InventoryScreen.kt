@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import com.example.smartpantry.ui.home.ContextAddButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -195,19 +196,7 @@ fun InventoryScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = {
-                    if (selectedTab == 0) onAddInventoryClick() else onCreateIngredientClick()
-                },
-                containerColor = scheme.primary,
-                contentColor = scheme.onPrimary,
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Icon(
-                    Icons.Default.Add,
-                    contentDescription = if (selectedTab == 0) "Add stock" else "Create ingredient"
-                )
-            }
+            ContextAddButton(Modifier.padding(bottom=92.dp),onIngredient=onCreateIngredientClick,onPantry=onAddInventoryClick)
         }
     ) { innerPadding ->
         Column(
@@ -245,7 +234,7 @@ fun InventoryScreen(
                 ) {
 
                     LazyColumn(
-                        contentPadding = PaddingValues(18.dp, 12.dp, 18.dp, 88.dp),
+                        contentPadding = PaddingValues(18.dp, 12.dp, 18.dp, 154.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         item {

@@ -15,6 +15,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -44,6 +45,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.AsyncImage
 import com.example.smartpantry.Screen.CommunityScreen.cleanDisplay
 import com.example.smartpantry.Screen.CommunityScreen.cleanInput
@@ -102,7 +106,7 @@ fun CommunityScreen(
             when {
                 initialSaved -> "saved"
                 initialMine -> "personal"
-                else -> "for_me"
+                else -> "post"
             }
         )
     }
@@ -121,6 +125,7 @@ fun CommunityScreen(
 
     var search by rememberSaveable { mutableStateOf("") }
     var category by rememberSaveable { mutableStateOf("All") }
+    var filterSettings by rememberSaveable { mutableStateOf("{}") }
     var mineCategory by rememberSaveable { mutableStateOf("All") }
 
     var deleteConfirmRecipe by remember { mutableStateOf<Recipe?>(null) }
@@ -133,6 +138,7 @@ fun CommunityScreen(
     var editingCaption by rememberSaveable { mutableStateOf(false) }
     var requestId by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
     val detail by vm.detail.collectAsState()
+    val postScroll=rememberLazyListState();val favouriteScroll=rememberLazyListState();val myScroll=rememberLazyListState();val recommendationScroll=rememberLazyListState()
     val root = screen == "home"
 
     val matchByRecipeId = remember(recommendedRecipes) {
@@ -186,7 +192,7 @@ fun CommunityScreen(
         if (!busy) {
             when (screen) {
                 "reviews" -> screen = "detail"
-                "detail", "editor" -> {
+                "detail", "editor", "personal_detail" -> {
                     if ((initialPostId > 0L && screen == "detail") || (startCreate && screen == "editor")) {
                         onBack?.invoke()
                     } else {
@@ -195,7 +201,7 @@ fun CommunityScreen(
                         screen = "home"
                     }
                 }
-                else -> onBack?.invoke()
+                else -> if(initialSaved || initialMine)onBack?.invoke() else if(activeFilter!="post"){activeFilter="post";search=""} else onBack?.invoke()
             }
         }
     }
@@ -204,19 +210,21 @@ fun CommunityScreen(
     LaunchedEffect(Unit) {
         vm.bindUser()
         recipeVm.refreshRecipes()
-        recipeVm.loadRecommendedRecipes()
+        vm.loadRecommendations()
         vm.feed("feed", "", "All")
     }
-    LaunchedEffect(localRecipes) {
-        if (localRecipes.isNotEmpty()) {
-            recipeVm.loadRecommendedRecipes()
-        }
-    }
-    LaunchedEffect(activeFilter, search, category, screen) {
+    LaunchedEffect(activeFilter, search, category, screen,filterSettings) {
         if (screen == "home" && activeFilter in listOf("post", "saved")) {
             if (search.isNotBlank()) delay(250.milliseconds)
-            vm.feed(if (activeFilter == "saved") "saved" else "feed", search, category)
+            vm.feed(if (activeFilter == "saved") "saved" else "feed", search, category,filters=Json.parseToJsonElement(filterSettings).jsonObject)
         }
+    }
+    val lifecycle=LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle,screen,activeFilter,search,category,filterSettings) {
+        val observer=LifecycleEventObserver { _,event -> if(event==Lifecycle.Event.ON_RESUME && screen=="home") {
+            vm.loadRecommendations();vm.feed(if(activeFilter=="saved")"saved" else "feed",search,category,keepVisible=true,filters=Json.parseToJsonElement(filterSettings).jsonObject)
+        } }
+        lifecycle.addObserver(observer);onDispose { lifecycle.removeObserver(observer) }
     }
     LaunchedEffect(screen, postId) {
         if (screen in listOf("detail", "reviews") && postId > 0L) {
@@ -258,31 +266,14 @@ fun CommunityScreen(
                     "editor" -> if (draft.recipeId > 0) "Edit recipe" else "Create recipe"
                     else -> when (activeFilter) {
                         "for_me" -> "For you"
-                        "saved" -> "Saved recipes"
-                        "personal" -> "Personal recipes"
-                        else -> "Community posts"
+                        "saved" -> "Favourites"
+                        "personal" -> "My recipes"
+                        else -> "Community recipes"
                     }
                 },
                 showBack = screen != "home" || initialSaved || initialMine || initialPostId > 0L || startCreate,
                 onBack = back,
-                action = {
-                    if (screen == "home") {
-                        FilledTonalButton(
-                            onClick = {
-                                if (vm.startNew()) dialog = "resume" else {
-                                    vm.resetDraft()
-                                    screen = "editor"
-                                }
-                            },
-                            enabled = !busy,
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                        ) {
-                            Icon(Icons.Default.Add, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Create", style = MaterialTheme.typography.labelLarge)
-                        }
-                    }
-                }
+                action = null
             )
             if (loading && !root) LinearProgressIndicator(Modifier.fillMaxWidth())
             Crossfade(
@@ -292,693 +283,25 @@ fun CommunityScreen(
                 label = "community-page"
             ) { visibleScreen ->
                 when (visibleScreen) {
-                    "home" -> {
-                        PullToRefreshBox(
-                            isRefreshing = loading,
-                            onRefresh = {
-                                vm.feed(if (activeFilter == "saved") "saved" else "feed", search, category, keepVisible = true)
-                                recipeVm.refreshRecipes()
-                                recipeVm.loadRecommendedRecipes()
-                            },
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            LazyColumn(
-                                Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(18.dp, 8.dp, 18.dp, 88.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                // 1. Top Filter Tabs: For Me | Post | Saved | Personal
-                                item {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .horizontalScroll(rememberScrollState()),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        val tabs = listOf(
-                                            Triple("for_me", "For Me", Icons.Default.AutoAwesome),
-                                            Triple("post", "Post", Icons.Default.Public),
-                                            Triple("saved", "Saved", Icons.Default.Bookmark),
-                                            Triple("personal", "Personal", Icons.Default.Person)
-                                        )
-                                        tabs.forEach { (key, label, icon) ->
-                                            FilterChip(
-                                                selected = activeFilter == key,
-                                                onClick = {
-                                                    activeFilter = key
-                                                    search = ""
-                                                },
-                                                leadingIcon = {
-                                                    Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
-                                                },
-                                                label = { Text(label, fontWeight = FontWeight.SemiBold) }
-                                            )
-                                        }
-                                    }
-                                }
-
-                                // 2. Unified Search Bar
-                                item {
-                                    OutlinedTextField(
-                                        value = search,
-                                        onValueChange = { search = it.take(80) },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        singleLine = true,
-                                        placeholder = {
-                                            Text(
-                                                when (activeFilter) {
-                                                    "for_me" -> "Search recommended recipes"
-                                                    "saved" -> "Search saved recipes"
-                                                    "personal" -> "Search personal recipes"
-                                                    else -> "Search community posts"
-                                                }
-                                            )
-                                        },
-                                        leadingIcon = { Icon(Icons.Default.Search, null) },
-                                        shape = RoundedCornerShape(16.dp),
-                                        trailingIcon = if (search.isNotBlank()) ({
-                                            IconButton(onClick = { search = "" }) {
-                                                Icon(Icons.Default.Close, "Clear search")
-                                            }
-                                        }) else null
-                                    )
-                                }
-
-                                // 3. Persistent Recommendation Bar on Post / Saved / Personal tabs
-                                if (activeFilter != "for_me" && topRecommendations.isNotEmpty()) {
-                                    item {
-                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                                ) {
-                                                    Icon(
-                                                        Icons.Default.AutoAwesome,
-                                                        contentDescription = null,
-                                                        tint = scheme.primary,
-                                                        modifier = Modifier.size(18.dp)
-                                                    )
-                                                    Text(
-                                                        "Recommended for your pantry",
-                                                        style = MaterialTheme.typography.titleSmall,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
-                                                }
-                                                TextButton(
-                                                    onClick = {
-                                                        activeFilter = "for_me"
-                                                        search = ""
-                                                    },
-                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                                                ) {
-                                                    Text("See all →", style = MaterialTheme.typography.labelMedium)
-                                                }
-                                            }
-
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .horizontalScroll(rememberScrollState()),
-                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                            ) {
-                                                topRecommendations.forEach { recResult ->
-                                                    val rec = recResult.recipe
-                                                    val rId = rec.recipeId ?: 0L
-                                                    val imgUrl = rec.localRecipeImage?.takeIf { File(it).exists() }
-                                                        ?: rec.recipeImage.orEmpty()
-                                                    val communityRow = syncedMap[rId]
-                                                    val isPublished = communityRow?.flag("published") == true
-                                                    val publishedPostId = communityRow?.long("postId") ?: 0L
-                                                    val urgentExpiry = recResult.expiredRate >= 0.6
-
-                                                    Surface(
-                                                        shape = RoundedCornerShape(16.dp),
-                                                        color = scheme.surface,
-                                                        border = BorderStroke(1.dp, scheme.outlineVariant),
-                                                        modifier = Modifier
-                                                            .width(190.dp)
-                                                            .clip(RoundedCornerShape(16.dp))
-                                                            .combinedClickable(
-                                                                onClick = { openLocalDetail(rId) },
-                                                                onLongClick = {
-                                                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                                    longPressedRecipe = RecipeActionTarget(
-                                                                        recipeId = rId,
-                                                                        title = rec.recipeName,
-                                                                        isPublished = isPublished,
-                                                                        postId = publishedPostId,
-                                                                        localRecipe = rec,
-                                                                        matchInfo = recResult
-                                                                    )
-                                                                }
-                                                            )
-                                                    ) {
-                                                        Column {
-                                                            RecipePhoto(
-                                                                url = imgUrl,
-                                                                modifier = Modifier
-                                                                    .fillMaxWidth()
-                                                                    .height(92.dp)
-                                                            )
-                                                            Column(
-                                                                modifier = Modifier.padding(10.dp),
-                                                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                                                            ) {
-                                                                Text(
-                                                                    rec.recipeName,
-                                                                    fontWeight = FontWeight.Bold,
-                                                                    style = MaterialTheme.typography.bodyMedium,
-                                                                    maxLines = 1,
-                                                                    overflow = TextOverflow.Ellipsis
-                                                                )
-                                                                Surface(
-                                                                    shape = RoundedCornerShape(8.dp),
-                                                                    color = if (urgentExpiry) Color(0xFFFEF3C7) else scheme.primaryContainer
-                                                                ) {
-                                                                    Text(
-                                                                        text = if (urgentExpiry) {
-                                                                            "Use soon · ${recResult.matchingCount}/${recResult.totalIngredients}"
-                                                                        } else {
-                                                                            "${recResult.matchingCount}/${recResult.totalIngredients} in pantry"
-                                                                        },
-                                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                                                        style = MaterialTheme.typography.labelSmall,
-                                                                        color = if (urgentExpiry) Color(0xFFB45309) else scheme.onPrimaryContainer,
-                                                                        maxLines = 1
-                                                                    )
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // 4. Tab-Specific Content
-                                when (activeFilter) {
-                                    // ==================== FOR ME ====================
-                                    "for_me" -> {
-                                        if (filteredForMe.isEmpty() && !loading) {
-                                            item {
-                                                EmptyCommunity(
-                                                    title = "No recipes to recommend yet",
-                                                    message = "Create a recipe or add ingredients to your pantry to get personalized recommendations.",
-                                                    icon = Icons.Default.AutoAwesome
-                                                )
-                                            }
-                                        } else {
-                                            items(
-                                                filteredForMe,
-                                                key = { "forme_${it.recipe.recipeId ?: it.hashCode()}" }
-                                            ) { recResult ->
-                                                val rec = recResult.recipe
-                                                val rId = rec.recipeId ?: 0L
-                                                val communityRow = syncedMap[rId]
-                                                val isPublished = communityRow?.flag("published") == true
-                                                val publishedPostId = communityRow?.long("postId") ?: 0L
-                                                val imgUrl = rec.localRecipeImage?.takeIf { File(it).exists() }
-                                                    ?: rec.recipeImage.orEmpty()
-                                                val urgentExpiry = recResult.expiredRate >= 0.6
-
-                                                Surface(
-                                                    shape = RoundedCornerShape(20.dp),
-                                                    color = scheme.surface,
-                                                    border = BorderStroke(1.dp, scheme.outlineVariant),
-                                                    shadowElevation = 1.dp,
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .clip(RoundedCornerShape(20.dp))
-                                                        .combinedClickable(
-                                                            onClick = { openLocalDetail(rId) },
-                                                            onLongClick = {
-                                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                                longPressedRecipe = RecipeActionTarget(
-                                                                    recipeId = rId,
-                                                                    title = rec.recipeName,
-                                                                    isPublished = isPublished,
-                                                                    postId = publishedPostId,
-                                                                    localRecipe = rec,
-                                                                    matchInfo = recResult
-                                                                )
-                                                            }
-                                                        )
-                                                ) {
-                                                    Column {
-                                                        Box {
-                                                            RecipePhoto(
-                                                                url = imgUrl,
-                                                                modifier = Modifier
-                                                                    .fillMaxWidth()
-                                                                    .height(150.dp)
-                                                            )
-                                                            Surface(
-                                                                modifier = Modifier
-                                                                    .align(Alignment.TopStart)
-                                                                    .padding(10.dp),
-                                                                shape = RoundedCornerShape(10.dp),
-                                                                color = if (urgentExpiry) Color(0xFFFEF3C7) else scheme.primaryContainer
-                                                            ) {
-                                                                Text(
-                                                                    text = if (urgentExpiry) {
-                                                                        "Use soon · ${recResult.matchingCount}/${recResult.totalIngredients} ready"
-                                                                    } else {
-                                                                        "${recResult.matchingCount}/${recResult.totalIngredients} in pantry"
-                                                                    },
-                                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                                                    style = MaterialTheme.typography.labelSmall,
-                                                                    fontWeight = FontWeight.Bold,
-                                                                    color = if (urgentExpiry) Color(0xFFB45309) else scheme.onPrimaryContainer
-                                                                )
-                                                            }
-                                                        }
-                                                        Column(
-                                                            modifier = Modifier.padding(14.dp),
-                                                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                                                        ) {
-                                                            Text(
-                                                                rec.recipeName,
-                                                                style = MaterialTheme.typography.titleMedium,
-                                                                fontWeight = FontWeight.Bold,
-                                                                maxLines = 1,
-                                                                overflow = TextOverflow.Ellipsis
-                                                            )
-                                                            if (recResult.missingIngredients.isNotEmpty()) {
-                                                                Text(
-                                                                    "Missing: ${recResult.missingIngredients.joinToString(", ")}",
-                                                                    style = MaterialTheme.typography.bodySmall,
-                                                                    color = scheme.onSurfaceVariant,
-                                                                    maxLines = 1,
-                                                                    overflow = TextOverflow.Ellipsis
-                                                                )
-                                                            } else {
-                                                                Text(
-                                                                    "All ingredients ready in your pantry",
-                                                                    style = MaterialTheme.typography.bodySmall,
-                                                                    color = Color(0xFF216B43),
-                                                                    fontWeight = FontWeight.Medium
-                                                                )
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // ==================== POST & SAVED ====================
-                                    "post", "saved" -> {
-                                        if (activeFilter == "post") {
-                                            item {
-                                                Row(
-                                                    Modifier.fillMaxWidth(),
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                ) {
-                                                    listOf("All", "Malaysian", "Vegan").forEach { name ->
-                                                        FilterChip(
-                                                            selected = category == name,
-                                                            onClick = { category = name },
-                                                            label = { Text(name) }
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        if (posts.isEmpty() && !loading) {
-                                            item {
-                                                EmptyCommunity(
-                                                    title = if (activeFilter == "saved") "No saved recipes"
-                                                    else if (search.isNotBlank()) "No matching recipes"
-                                                    else "Be the first to share",
-                                                    message = if (activeFilter == "saved") "Tap a bookmark on a community recipe to keep it here."
-                                                    else "Try another search, or publish one of your recipes.",
-                                                    icon = Icons.Default.RestaurantMenu
-                                                )
-                                            }
-                                        }
-                                        items(posts, key = { it.long("id") }) { row ->
-                                            RecipeFeedCard(
-                                                row = row,
-                                                matchInfo = matchByRecipeId[row.long("recipeId")],
-                                                enabled = !busy,
-                                                onOpen = { openPost(row.long("id")) },
-                                                onFavourite = {
-                                                    vm.action(
-                                                        "favourite",
-                                                        row.long("id"),
-                                                        buildJsonObject { put("enabled", !row.flag("favourite")) }
-                                                    ) {
-                                                        if (activeFilter == "saved") vm.feed("saved", search, category)
-                                                    }
-                                                }
-                                            )
-                                        }
-                                        if (more) {
-                                            item {
-                                                OutlinedButton(
-                                                    onClick = {
-                                                        vm.feed(
-                                                            if (activeFilter == "saved") "saved" else "feed",
-                                                            search,
-                                                            category,
-                                                            true
-                                                        )
-                                                    },
-                                                    enabled = !loading,
-                                                    modifier = Modifier.fillMaxWidth()
-                                                ) {
-                                                    Text("Load more recipes")
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // ==================== PERSONAL ====================
-                                    "personal" -> {
-                                        if (mineCategories.size > 1) {
-                                            item {
-                                                Row(
-                                                    Modifier
-                                                        .fillMaxWidth()
-                                                        .horizontalScroll(rememberScrollState()),
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                ) {
-                                                    mineCategories.forEach { cat ->
-                                                        FilterChip(
-                                                            selected = mineCategory == cat,
-                                                            onClick = { mineCategory = cat },
-                                                            label = { Text(cat) }
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        if (filteredLocalRecipes.isEmpty() && filteredRemoteOnly.isEmpty() && !loading) {
-                                            item {
-                                                EmptyCommunity(
-                                                    title = "No personal recipes yet",
-                                                    message = "Tap Create at the top right to make a recipe, then view or publish it anytime.",
-                                                    icon = Icons.Default.MenuBook
-                                                )
-                                            }
-                                        } else {
-                                            items(filteredLocalRecipes, key = { "local_${it.recipeId ?: it.hashCode()}" }) { recipe ->
-                                                val rId = recipe.recipeId ?: 0L
-                                                val communityRow = syncedMap[rId]
-                                                val isPublished = communityRow?.flag("published") == true
-                                                val publishedPostId = communityRow?.long("postId") ?: 0L
-                                                val imgUrl = recipe.localRecipeImage?.takeIf { File(it).exists() }
-                                                    ?: recipe.recipeImage.orEmpty()
-                                                val matchInfo = matchByRecipeId[rId]
-
-                                                Surface(
-                                                    shape = RoundedCornerShape(18.dp),
-                                                    color = scheme.surface,
-                                                    border = BorderStroke(1.dp, scheme.outlineVariant),
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .clip(RoundedCornerShape(18.dp))
-                                                        .combinedClickable(
-                                                            onClick = { openLocalDetail(rId) },
-                                                            onLongClick = {
-                                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                                longPressedRecipe = RecipeActionTarget(
-                                                                    recipeId = rId,
-                                                                    title = recipe.recipeName,
-                                                                    isPublished = isPublished,
-                                                                    postId = publishedPostId,
-                                                                    localRecipe = recipe,
-                                                                    matchInfo = matchInfo
-                                                                )
-                                                            }
-                                                        )
-                                                ) {
-                                                    Column(
-                                                        Modifier.padding(14.dp),
-                                                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                                                    ) {
-                                                        Row(
-                                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                                            verticalAlignment = Alignment.CenterVertically
-                                                        ) {
-                                                            RecipePhoto(
-                                                                url = imgUrl,
-                                                                modifier = Modifier
-                                                                    .size(72.dp)
-                                                                    .clip(RoundedCornerShape(14.dp))
-                                                            )
-                                                            Column(
-                                                                Modifier.weight(1f),
-                                                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                                                            ) {
-                                                                Text(
-                                                                    recipe.recipeName,
-                                                                    fontWeight = FontWeight.Bold,
-                                                                    style = MaterialTheme.typography.titleMedium,
-                                                                    maxLines = 1,
-                                                                    overflow = TextOverflow.Ellipsis
-                                                                )
-                                                                Row(
-                                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                                    modifier = Modifier.horizontalScroll(rememberScrollState())
-                                                                ) {
-                                                                    recipe.recipeCategory?.takeIf { it.isNotBlank() }?.let {
-                                                                        Surface(
-                                                                            shape = RoundedCornerShape(8.dp),
-                                                                            color = scheme.primaryContainer
-                                                                        ) {
-                                                                            Text(
-                                                                                it,
-                                                                                Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                                                                style = MaterialTheme.typography.labelSmall,
-                                                                                color = scheme.onPrimaryContainer
-                                                                            )
-                                                                        }
-                                                                    }
-                                                                    if (recipe.isVegan) {
-                                                                        Surface(
-                                                                            shape = RoundedCornerShape(8.dp),
-                                                                            color = Color(0xFFE4F4EA)
-                                                                        ) {
-                                                                            Text(
-                                                                                "🌱 Vegan",
-                                                                                Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                                                                style = MaterialTheme.typography.labelSmall,
-                                                                                color = Color(0xFF216B43)
-                                                                            )
-                                                                        }
-                                                                    }
-                                                                    if (matchInfo != null && matchInfo.totalIngredients > 0) {
-                                                                        Surface(
-                                                                            shape = RoundedCornerShape(8.dp),
-                                                                            color = scheme.secondaryContainer
-                                                                        ) {
-                                                                            Text(
-                                                                                "${matchInfo.matchingCount}/${matchInfo.totalIngredients} in pantry",
-                                                                                Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                                                                style = MaterialTheme.typography.labelSmall,
-                                                                                color = scheme.onSecondaryContainer
-                                                                            )
-                                                                        }
-                                                                    }
-                                                                }
-                                                                Text(
-                                                                    "${recipe.cookingSteps.size} step(s)" +
-                                                                            if (isPublished) " · Published" else " · Tap to view details",
-                                                                    style = MaterialTheme.typography.labelSmall,
-                                                                    color = if (isPublished) Color(0xFF216B43) else scheme.onSurfaceVariant
-                                                                )
-                                                            }
-                                                        }
-
-                                                        HorizontalDivider(color = scheme.outlineVariant)
-
-                                                        Row(
-                                                            Modifier.fillMaxWidth(),
-                                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                                            verticalAlignment = Alignment.CenterVertically
-                                                        ) {
-                                                            if (isPublished) {
-                                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                                    FilledTonalButton(
-                                                                        onClick = { openPost(publishedPostId) },
-                                                                        shape = RoundedCornerShape(12.dp),
-                                                                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                                                                    ) {
-                                                                        Icon(Icons.Default.Visibility, null, Modifier.size(18.dp))
-                                                                        Spacer(Modifier.width(6.dp))
-                                                                        Text("View post", style = MaterialTheme.typography.labelMedium)
-                                                                    }
-                                                                    OutlinedButton(
-                                                                        onClick = {
-                                                                            dialogId = publishedPostId
-                                                                            dialogTitle = recipe.recipeName
-                                                                            dialog = "unpublish"
-                                                                        },
-                                                                        enabled = !busy,
-                                                                        shape = RoundedCornerShape(12.dp),
-                                                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                                                    ) {
-                                                                        Text("Remove post", style = MaterialTheme.typography.labelMedium)
-                                                                    }
-                                                                }
-                                                            } else {
-                                                                FilledTonalButton(
-                                                                    onClick = { publish(rId, recipe.recipeName) },
-                                                                    enabled = !busy && rId > 0,
-                                                                    shape = RoundedCornerShape(12.dp),
-                                                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                                                                ) {
-                                                                    Icon(Icons.Default.Public, null, Modifier.size(18.dp))
-                                                                    Spacer(Modifier.width(6.dp))
-                                                                    Text("Publish to Community", style = MaterialTheme.typography.labelMedium)
-                                                                }
-                                                            }
-
-                                                            Row {
-                                                                IconButton(
-                                                                    onClick = {
-                                                                        if (rId > 0) {
-                                                                            vm.openDraft(rId) { screen = "editor" }
-                                                                        }
-                                                                    },
-                                                                    enabled = !busy && rId > 0
-                                                                ) {
-                                                                    Icon(Icons.Default.Edit, "Edit recipe", tint = scheme.primary)
-                                                                }
-                                                                IconButton(
-                                                                    onClick = { deleteConfirmRecipe = recipe },
-                                                                    enabled = !busy
-                                                                ) {
-                                                                    Icon(Icons.Default.DeleteOutline, "Delete recipe", tint = scheme.error)
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            // Cloud-only recipes from `vm.mine`
-                                            items(filteredRemoteOnly, key = { "remote_${it.long("id")}" }) { row ->
-                                                val rId = row.long("id")
-                                                val isPublished = row.flag("published")
-                                                val postIdRemote = row.long("postId")
-
-                                                Surface(
-                                                    shape = RoundedCornerShape(18.dp),
-                                                    color = scheme.surface,
-                                                    border = BorderStroke(1.dp, scheme.outlineVariant),
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .clip(RoundedCornerShape(18.dp))
-                                                        .combinedClickable(
-                                                            onClick = {
-                                                                if (isPublished && postIdRemote > 0L) openPost(postIdRemote)
-                                                                else vm.openDraft(rId) { screen = "editor" }
-                                                            },
-                                                            onLongClick = {
-                                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                                longPressedRecipe = RecipeActionTarget(
-                                                                    recipeId = rId,
-                                                                    title = row.str("title"),
-                                                                    isPublished = isPublished,
-                                                                    postId = postIdRemote,
-                                                                    localRecipe = null,
-                                                                    matchInfo = null
-                                                                )
-                                                            }
-                                                        )
-                                                ) {
-                                                    Column(
-                                                        Modifier.padding(14.dp),
-                                                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                                                    ) {
-                                                        Row(
-                                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                                            verticalAlignment = Alignment.CenterVertically
-                                                        ) {
-                                                            RecipePhoto(
-                                                                url = row.str("image"),
-                                                                modifier = Modifier
-                                                                    .size(72.dp)
-                                                                    .clip(RoundedCornerShape(14.dp))
-                                                            )
-                                                            Column(
-                                                                Modifier.weight(1f),
-                                                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                                                            ) {
-                                                                Text(
-                                                                    row.str("title"),
-                                                                    fontWeight = FontWeight.Bold,
-                                                                    style = MaterialTheme.typography.titleMedium,
-                                                                    maxLines = 1,
-                                                                    overflow = TextOverflow.Ellipsis
-                                                                )
-                                                                Text(
-                                                                    if (isPublished) "Published" else "Personal recipe",
-                                                                    style = MaterialTheme.typography.labelSmall,
-                                                                    color = scheme.primary
-                                                                )
-                                                            }
-                                                        }
-                                                        HorizontalDivider(color = scheme.outlineVariant)
-                                                        Row(
-                                                            Modifier.fillMaxWidth(),
-                                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                                            verticalAlignment = Alignment.CenterVertically
-                                                        ) {
-                                                            if (isPublished) {
-                                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                                    FilledTonalButton(
-                                                                        onClick = { openPost(postIdRemote) },
-                                                                        shape = RoundedCornerShape(12.dp)
-                                                                    ) { Text("View post", style = MaterialTheme.typography.labelMedium) }
-                                                                    OutlinedButton(
-                                                                        onClick = {
-                                                                            dialogId = postIdRemote
-                                                                            dialogTitle = row.str("title")
-                                                                            dialog = "unpublish"
-                                                                        },
-                                                                        enabled = !busy,
-                                                                        shape = RoundedCornerShape(12.dp)
-                                                                    ) { Text("Remove post", style = MaterialTheme.typography.labelMedium) }
-                                                                }
-                                                            } else {
-                                                                FilledTonalButton(
-                                                                    onClick = { publish(rId, row.str("title")) },
-                                                                    enabled = !busy,
-                                                                    shape = RoundedCornerShape(12.dp)
-                                                                ) {
-                                                                    Icon(Icons.Default.Public, null, Modifier.size(18.dp))
-                                                                    Spacer(Modifier.width(6.dp))
-                                                                    Text("Publish to Community", style = MaterialTheme.typography.labelMedium)
-                                                                }
-                                                            }
-                                                            IconButton(
-                                                                onClick = { vm.openDraft(rId) { screen = "editor" } },
-                                                                enabled = !busy
-                                                            ) {
-                                                                Icon(Icons.Default.Edit, "Edit recipe", tint = scheme.primary)
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
+                    "home" -> CommunityHub(
+                        vm=vm,mode=activeFilter,search=search,onSearch={search=it},category=category,onCategory={category=it;filterSettings="{}"},
+                        filters=Json.parseToJsonElement(filterSettings).jsonObject,
+                        onFilters={ filterSettings=it.toString();category="All" },
+                        onMode={activeFilter=it;search=""},onOpenPost=openPost,
+                        onOpenPersonal={id->vm.openDraft(id){screen="personal_detail"}},onEditPost={row->dialogId=row.long("id");dialogTitle=row.str("title");caption=row.str("caption");editingCaption=true;dialog="publish"},
+                        onEditRecipe={row->vm.openDraft(row.long("recipeId")){screen="editor"}},
+                        onRemovePost={row->dialogId=row.long("id");dialogTitle=row.str("title");dialog="unpublish"},
+                        onCreate={if(vm.startNew())dialog="resume" else {vm.resetDraft();screen="editor"}},
+                        onEditPersonal={id->vm.openDraft(id){screen="editor"}},onPublish=publish,
+                        onDeletePersonal={id->vm.deletePersonal(id){recipeVm.refreshRecipes()}},
+                        listState=when(activeFilter){"saved"->favouriteScroll;"personal"->myScroll;"for_me"->recommendationScroll;else->postScroll}
+                    )
+                    "personal_detail" -> LocalRecipeDetails(
+                        recipe=Recipe(recipeId=draft.recipeId,recipeName=draft.title,recipeCategory=draft.category,isVegan=draft.vegan,
+                          description=draft.description,cookingSteps=draft.steps,recipeImage=draft.image,userId=vm.userId),
+                        matchInfo=null,busy=busy,modifier=Modifier.fillMaxSize(),onEdit={screen="editor"},
+                        onPublish={publish(draft.recipeId,draft.title)},onShoppingList=onShoppingList
+                    )
                     "editor" -> RecipeEditor(
                         vm = vm,
                         modifier = Modifier.fillMaxSize(),
@@ -1308,8 +631,9 @@ fun CommunityScreen(
                             dialog = ""
                             postId = 0L
                             screen = "home"
-                            activeFilter = "personal"
-                            vm.feed()
+                            activeFilter = "post"
+                            vm.feed("feed",search,category,filters=Json.parseToJsonElement(filterSettings).jsonObject)
+                            vm.loadRecommendations()
                         }
                     },
                     enabled = !busy
@@ -1520,7 +844,7 @@ internal fun SmartPantrySectionHeader(
                 verticalAlignment = Alignment.CenterVertically
             ) { action?.invoke() }
         }
-        Text(
+        if(title.isNotBlank()) Text(
             title,
             Modifier.padding(start = 18.dp, end = 18.dp, top = 17.dp, bottom = 7.dp),
             style = MaterialTheme.typography.headlineSmall,
@@ -1532,7 +856,20 @@ internal fun SmartPantrySectionHeader(
 @Composable
 internal fun RecipePhoto(url: String, modifier: Modifier, recipeFallback: Boolean = true) {
     val c = MaterialTheme.colorScheme
+    val drawable=if(url.contains("://") || url.startsWith("/"))null else when(url.substringAfterLast('/').substringBeforeLast('.')) {
+        "home_eggs","eggs"->com.example.smartpantry.R.drawable.home_eggs
+        "home_tomatoes","tomatoes"->com.example.smartpantry.R.drawable.home_tomatoes
+        "ingredient_milk","milk","fresh milk"->com.example.smartpantry.R.drawable.ingredient_milk
+        "ingredient_onion","onion"->com.example.smartpantry.R.drawable.ingredient_onion
+        "ingredient_rice","rice","white rice"->com.example.smartpantry.R.drawable.ingredient_rice
+        "ingredient_orange","orange"->com.example.smartpantry.R.drawable.ingredient_orange
+        else->null
+    }
     Box(modifier.background(c.surfaceVariant), contentAlignment = Alignment.Center) {
+        if(drawable!=null) {
+            androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(drawable),null,Modifier.fillMaxSize(),contentScale=ContentScale.Fit)
+            return@Box
+        }
         Icon(
             if (recipeFallback) Icons.Default.RestaurantMenu else Icons.Default.Eco,
             null,
@@ -1688,6 +1025,16 @@ private fun RecipeDetails(
     val post = data["post"]!!.jsonObject
     var export by rememberSaveable { mutableStateOf(false) }
     Column(modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
+        if(post.str("owner")==userId) Row(Modifier.fillMaxWidth().padding(horizontal=12.dp),horizontalArrangement=Arrangement.End) {
+            IconButton(onClick={onCaption(post)},enabled=!busy){Icon(Icons.Default.Edit,"Edit post")}
+            var menu by remember { mutableStateOf(false) }
+            Box { IconButton(onClick={menu=true}){Icon(Icons.Default.MoreVert,"Post options")}
+                DropdownMenu(expanded=menu,onDismissRequest={menu=false}) {
+                    DropdownMenuItem(text={Text("Edit recipe")},onClick={menu=false;onEdit(post)})
+                    DropdownMenuItem(text={Text("Remove post")},onClick={menu=false;onUnpublish(post)},leadingIcon={Icon(Icons.Default.DeleteOutline,null)})
+                }
+            }
+        }
         RecipePhoto(post.str("image"), Modifier.fillMaxWidth().height(215.dp))
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(verticalAlignment = Alignment.Top) {
@@ -1781,14 +1128,7 @@ private fun RecipeDetails(
                 Spacer(Modifier.width(8.dp))
                 Text("View reviews (${post.long("commentCount")})")
             }
-            if (post.str("owner") == userId) {
-                HorizontalDivider(color = c.outlineVariant)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    TextButton(onClick = { onCaption(post) }, enabled = !busy) { Text("Edit post") }
-                    TextButton(onClick = { onEdit(post) }, enabled = !busy) { Text("Edit recipe") }
-                    TextButton(onClick = { onUnpublish(post) }, enabled = !busy) { Text("Remove") }
-                }
-            }
+
         }
     }
     if (export) CommunityExportMenu(data) { export = false }
@@ -1868,11 +1208,7 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, onSaved: (L
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
                 )
-                UnitDropdown(
-                    "Category",
-                    draft.category,
-                    listOf("Malaysian", "Asian", "Western", "Dessert", "Other")
-                ) { vm.editDraft(draft.copy(category = it)) }
+
             }
         }
         OutlinedTextField(
@@ -1885,9 +1221,14 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, onSaved: (L
             maxLines = 5,
             shape = RoundedCornerShape(12.dp)
         )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = draft.vegan, onCheckedChange = { vm.editDraft(draft.copy(vegan = it)) })
-            Text("Vegan (no animal ingredients)", style = MaterialTheme.typography.bodyMedium)
+        UnitDropdown("Cuisine",draft.cuisine.ifBlank { "Unspecified" },listOf("Unspecified","Malaysian","Chinese","Asian","Western","Other")) {
+            vm.editDraft(draft.copy(cuisine=if(it=="Unspecified")"" else it,category=if(it=="Unspecified")"Unspecified" else it))
+        }
+        UnitDropdown("Dish type",draft.dishType.ifBlank { "Unspecified" },listOf("Unspecified","Rice dishes","Noodles","Light meals","Desserts","Other")) {
+            vm.editDraft(draft.copy(dishType=if(it=="Unspecified")"" else it))
+        }
+        UnitDropdown("Dietary preference",if(draft.vegan)"Vegan" else draft.dietary,listOf("Unspecified","Vegetarian","Vegan")) {
+            vm.editDraft(draft.copy(dietary=it,vegan=it=="Vegan"))
         }
         Row(
             Modifier.fillMaxWidth(),

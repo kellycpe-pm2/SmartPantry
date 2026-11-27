@@ -24,10 +24,18 @@ internal class CommunityRepository {
     suspend fun call(action: String, payload: JsonObject = buildJsonObject {}): JsonObject = withContext(Dispatchers.IO) {
         supabase.auth.sessionStatus.first { it !is SessionStatus.Initializing }
         userId()
-        val response = supabase.postgrest.rpc("community_api", buildJsonObject {
+        val response = supabase.postgrest.rpc(if(action in setOf("feed","draft","save_recipe")) "community_v5" else "community_api", buildJsonObject {
             put("p_action", action); put("p_payload", payload)
         })
         Json.parseToJsonElement(response.data) as? JsonObject ?: error("The server returned an unexpected response.")
+    }
+    suspend fun v5(action:String,payload:JsonObject=buildJsonObject{}):JsonObject=withContext(Dispatchers.IO) {
+        supabase.auth.sessionStatus.first { it !is SessionStatus.Initializing }; userId()
+        Json.parseToJsonElement(supabase.postgrest.rpc("community_v5",buildJsonObject { put("p_action",action);put("p_payload",payload) }).data).jsonObject
+    }
+    suspend fun recommendations(search:String="",page:Int=0):JsonObject=withContext(Dispatchers.IO) {
+        supabase.auth.sessionStatus.first { it !is SessionStatus.Initializing }; userId()
+        Json.parseToJsonElement(supabase.postgrest.rpc("community_for_you",buildJsonObject { put("p_search",search);put("p_page",page) }).data).jsonObject
     }
     /** Copy immediately: no dependency on a gallery permission surviving Activity recreation. */
     suspend fun importImage(context: Context, uri: Uri): String = withContext(Dispatchers.IO) {

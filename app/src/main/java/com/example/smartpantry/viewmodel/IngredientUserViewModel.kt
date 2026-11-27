@@ -359,7 +359,7 @@ class IngredientUserViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 Log.e("Inventory", "Failed to use inventory amount", e)
                 withContext(Dispatchers.Main) {
-                    onResult("Could not update the ingredient quantity: ${e.message ?: "Unknown error"}", false)
+                    onResult(com.example.smartpantry.core.userMessage(e), false)
                 }
             }
         }
@@ -465,7 +465,7 @@ class IngredientUserViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 Log.e("Inventory", "Failed adding/merging stock", e)
                 withContext(Dispatchers.Main) {
-                    onResult(e.message ?: "Failed to add stock.", false)
+                    onResult(com.example.smartpantry.core.userMessage(e), false)
                 }
             }
         }
@@ -551,7 +551,7 @@ class IngredientUserViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 Log.e("Inventory", "Failed updating batch", e)
                 withContext(Dispatchers.Main) {
-                    onResult(e.message ?: "Failed to update batch.", false)
+                    onResult(com.example.smartpantry.core.userMessage(e), false)
                 }
             }
         }

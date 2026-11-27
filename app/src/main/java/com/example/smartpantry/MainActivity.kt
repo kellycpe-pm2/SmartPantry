@@ -18,7 +18,7 @@ import com.example.smartpantry.hardware.ExpiryCheckWorker
 import com.example.smartpantry.hardware.NotificationHelper
 import com.example.smartpantry.ui.navigation.AppRoot
 import com.example.smartpantry.ui.theme.SmartPantryTheme
-import com.example.smartpantry.uicomponent.AppTheme
+
 import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
@@ -43,15 +43,8 @@ class MainActivity : ComponentActivity() {
         scheduleExpiryCheckWorker()
 
         setContent {
-            Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-                throwable.printStackTrace()
-            }
             SmartPantryTheme {
-                AppTheme {
-                    Surface(modifier = Modifier.fillMaxSize()) {
-                        AppRoot()
-                    }
-                }
+                Surface(modifier = Modifier.fillMaxSize()) { AppRoot() }
             }
         }
     }

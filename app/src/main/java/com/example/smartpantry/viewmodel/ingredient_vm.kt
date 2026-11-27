@@ -303,7 +303,7 @@ class IngredientViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } catch (e: Exception) {
                 Log.e("IngredientSync", "Save failed", e)
-                _uiState.update { it.copy(isSaving = false, error = "Failed: ${e.message}") }
+                _uiState.update { it.copy(isSaving = false, error = com.example.smartpantry.core.userMessage(e)) }
             }
         }
     }

@@ -42,6 +42,28 @@ internal class CommunityViewModel(application: Application, private val saved: S
     private val _error = MutableStateFlow<String?>(null); val error = _error.asStateFlow()
     private val _notice = MutableStateFlow<String?>(null); val notice = _notice.asStateFlow()
     private val _more = MutableStateFlow(false); val more = _more.asStateFlow()
+    private val _recommendations=MutableStateFlow<List<JsonObject>>(emptyList());val recommendations=_recommendations.asStateFlow()
+    private val _recommendationLoading=MutableStateFlow(false);val recommendationLoading=_recommendationLoading.asStateFlow()
+    private val _recommendationFailed=MutableStateFlow(false);val recommendationFailed=_recommendationFailed.asStateFlow()
+    private val _pantryEmpty=MutableStateFlow(false);val pantryEmpty=_pantryEmpty.asStateFlow()
+    private val _recommendationMore=MutableStateFlow(false);val recommendationMore=_recommendationMore.asStateFlow()
+    private val _feedFailed=MutableStateFlow(false);val feedFailed=_feedFailed.asStateFlow()
+    private var recommendationJob:Job?=null
+    private var recommendationPage=0
+    private var activeFilters:JsonObject=buildJsonObject{}
+    fun loadRecommendations(search:String="",append:Boolean=false) {
+        recommendationJob?.cancel()
+        val target=if(append) recommendationPage+1 else 0
+        recommendationJob=viewModelScope.launch {
+            _recommendationLoading.value=true;_recommendationFailed.value=false
+            try {
+                val data=repo.recommendations(search.trim(),target)
+                _recommendations.value=if(append)(_recommendations.value+data.rows("posts")).distinctBy { it.long("recipeId") } else data.rows("posts")
+                _pantryEmpty.value=data.flag("pantryEmpty");_recommendationMore.value=data.flag("hasMore");recommendationPage=target
+            } catch(t:Throwable) { if(t !is CancellationException) _recommendationFailed.value=true;failure(t) }
+            finally { if(kotlin.coroutines.coroutineContext[Job]?.isActive==true)_recommendationLoading.value=false }
+        }
+    }
     private var loadJob: Job? = null
     private var detailJob: Job? = null
     private var page = 0
@@ -63,23 +85,27 @@ internal class CommunityViewModel(application: Application, private val saved: S
             if (savedOwner != null && savedOwner != id) editDraft(RecipeDraft())
             saved["draftOwner"] = id
             _posts.value = emptyList(); _catalog.value = emptyList(); _mine.value = emptyList(); _detail.value = null
+            _recommendations.value=emptyList();_pantryEmpty.value=false;_feedFailed.value=false
             boundUser = id
         }
     }
-    fun feed(mode: String = activeMode, search: String = activeSearch, category: String = activeCategory, append: Boolean = false, keepVisible: Boolean = false) {
-        bindUser(); activeMode = mode; activeSearch = search.trim(); activeCategory = category
+    fun feed(mode: String = activeMode, search: String = activeSearch, category: String = activeCategory, append: Boolean = false, keepVisible: Boolean = false, filters:JsonObject=activeFilters) {
+        bindUser();activeFilters=filters; activeMode = mode; activeSearch = search.trim(); activeCategory = category
         loadJob?.cancel()
         if (!append) { page = 0; if(!keepVisible) _posts.value = emptyList() }
         val targetPage = if (append) page + 1 else 0
         loadJob = viewModelScope.launch {
-            _loading.value = true
+            _loading.value = true;_feedFailed.value=false
             try {
-                val result = repo.call("feed", buildJsonObject { put("mode", mode); put("search", search.trim()); put("category", category); put("page", targetPage) })
+                val result = repo.call("feed", buildJsonObject { put("mode", mode); put("search", search.trim()); put("category", category); put("page", targetPage);filters.forEach { (k,v)->put(k,v) }
+                    if(category in listOf("Malaysian","Chinese","Asian","Western"))put("cuisine",category)
+                    if(category=="Vegan")put("dietary","Vegan") })
                 val rows = result.rows("posts")
                 _posts.value = if (append) (_posts.value + rows).distinctBy { it.long("id") } else rows
                 page = targetPage; _more.value = rows.size == 30
                 val data = repo.call("catalog"); _catalog.value = data.rows("ingredients"); _mine.value = data.rows("recipes")
-            } catch (t: Throwable) { failure(t) } finally { _loading.value = false }
+            } catch (t: Throwable) { if(t !is CancellationException)_feedFailed.value=true;failure(t) }
+            finally { if(kotlin.coroutines.coroutineContext[Job]?.isActive==true)_loading.value=false }
         }
     }
     fun loadDetail(id: Long) {
@@ -111,6 +137,7 @@ internal class CommunityViewModel(application: Application, private val saved: S
     fun openDraft(id: Long, ready: () -> Unit) = mutate {
         val r = repo.call("draft", buildJsonObject { put("recipeId", id) })
         editDraft(RecipeDraft(recipeId=id,title=r.str("title"),category=r.str("category","Malaysian"),description=cleanInput(r.str("description"),5000),image=r.str("image"),vegan=r.flag("vegan"),
+            cuisine=r.str("cuisine"),dishType=r.str("dishType"),dietary=r.str("dietary","Unspecified"),
             ingredients=r.rows("ingredients").map {
                 DraftIngredient(
                     it.long("id"),
@@ -134,6 +161,7 @@ internal class CommunityViewModel(application: Application, private val saved: S
             value = value.copy(image=image); editDraft(value, keepRequest=true)
             val result = repo.call("save_recipe", buildJsonObject {
                 put("requestId", value.requestId); put("recipeId",value.recipeId); put("title",value.title.trim()); put("category",value.category)
+                put("cuisine",value.cuisine);put("dishType",value.dishType);put("dietary",if(value.vegan)"Vegan" else value.dietary);
                 put("description",value.description.trim()); put("image",image); put("vegan",value.vegan)
                 put("steps",JsonArray(value.steps.map { JsonPrimitive(it.trim()) }))
                 put("ingredients",JsonArray(value.ingredients.map { buildJsonObject { put("id",it.id); put("quantity",it.quantity.toDouble()); put("unit",it.unit) } }))
@@ -142,6 +170,10 @@ internal class CommunityViewModel(application: Application, private val saved: S
             editDraft(value.copy(recipeId=id,requestId=UUID.randomUUID().toString()))
             refreshCatalog(); _notice.value = "Recipe saved. You can now publish it."; done(id)
         }
+    }
+    fun deletePersonal(id:Long,done:()->Unit)=mutate {
+        repo.v5("delete_recipe",buildJsonObject{put("recipeId",id)});refreshCatalog();loadRecommendations()
+        _notice.value="Recipe deleted, including its linked community post if it was published.";done()
     }
     fun publish(recipeId: Long, caption: String, done: (Long) -> Unit) = mutate {
         require(caption.trim().length <= 500) { "Caption must have at most 500 characters." }

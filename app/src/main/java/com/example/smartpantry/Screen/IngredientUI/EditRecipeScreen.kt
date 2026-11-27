@@ -129,7 +129,7 @@ fun EditRecipeScreen(
 
             OutlinedTextField(
                 value = description,
-                onValueChange = { description = it.take(5000) },
+                onValueChange = { description = com.example.smartpantry.Screen.CommunityScreen.cleanInput(it,5000,8) },
                 label = { Text("Description") },
                 supportingText = { Text("${description.length}/5000") },
                 modifier = Modifier.fillMaxWidth(),
@@ -223,7 +223,7 @@ fun EditRecipeScreen(
                         value = step,
                         onValueChange = { updatedText ->
                             cookingSteps = cookingSteps.mapIndexed { i, s ->
-                                if (i == idx) updatedText.take(500) else s
+                                if (i == idx) com.example.smartpantry.Screen.CommunityScreen.cleanInput(updatedText,500,2) else s
                             }
                         },
                         label = { Text("Step ${idx + 1}") },

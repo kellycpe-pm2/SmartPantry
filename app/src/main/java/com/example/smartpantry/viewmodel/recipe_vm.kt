@@ -155,10 +155,10 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
     }
 
     // Form updaters
-    fun onNameChange(v: String)              = _uiState.update { it.copy(recipeName = v, error = null) }
+    fun onNameChange(v: String)              = _uiState.update { it.copy(recipeName = com.example.smartpantry.Screen.CommunityScreen.cleanInput(v,150,0), error = null) }
     fun onCategoryChange(v: String)          = _uiState.update { it.copy(category = v, error = null) }
-    fun onDescriptionChange(v: String)       = _uiState.update { it.copy(description = v, error = null) }
-    fun onStepsChange(steps: List<String>)   = _uiState.update { it.copy(cookingSteps = steps.take(30), error = null) }
+    fun onDescriptionChange(v: String)       = _uiState.update { it.copy(description = com.example.smartpantry.Screen.CommunityScreen.cleanInput(v,5000,8), error = null) }
+    fun onStepsChange(steps: List<String>)   = _uiState.update { it.copy(cookingSteps = steps.take(30).map { com.example.smartpantry.Screen.CommunityScreen.cleanInput(it,500,2) }, error = null) }
     fun onVeganChange(v: Boolean = false)    = _uiState.update { it.copy(isVegan = v, error = null) }
     fun onImagePicked(path: String?)         = _uiState.update { it.copy(imagePath = path, error = null) }
     fun clearError()                         = _uiState.update { it.copy(error = null) }
@@ -194,9 +194,12 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
 
             recipeItems.map { item ->
                 val master = masterIngredients[item.ingredientId]
-                val stocks = pantryByIngredient[item.ingredientId].orEmpty()
-                val availableQuantity = stocks.sumOf { it.quantity ?: 0.0 }
-                val expiry = stocks.map { it.expiredDate }.filter { it > 0L }.minOrNull()
+                val today=java.time.LocalDate.now(java.time.ZoneId.of("Asia/Kuala_Lumpur"))
+                val stocks = pantryByIngredient[item.ingredientId].orEmpty().filter {
+                    (it.quantity ?: 0.0)>0 && java.time.Instant.ofEpochMilli(it.expiredDate).atZone(java.time.ZoneId.of("Asia/Kuala_Lumpur")).toLocalDate()>=today
+                }
+                val availableQuantity = stocks.sumOf { com.example.smartpantry.core.PurchaseReviewRules.convert(it.quantity ?: 0.0,it.quantityUnit.orEmpty(),item.unit.orEmpty()) ?: 0.0 }
+                val expiry = stocks.filter { com.example.smartpantry.core.PurchaseReviewRules.convert(1.0,it.quantityUnit.orEmpty(),item.unit.orEmpty())!=null }.map { it.expiredDate }.minOrNull()
 
                 RecipeDetailIngredient(
                     ingredientId = item.ingredientId,
@@ -207,7 +210,7 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                     requiredQuantity = item.quantity ?: 1.0,
                     requiredUnit = item.unit.orEmpty(),
                     availableQuantity = availableQuantity,
-                    availableUnit = stocks.firstOrNull()?.quantityUnit.orEmpty(),
+                    availableUnit = item.unit.orEmpty(),
                     expiryDate = expiry
                 )
             }
@@ -451,7 +454,7 @@ class recipe_vm(app: Application) : AndroidViewModel(app) {
                 pushRecipeToSupabase(localRecipeId)
             } catch (e: Exception) {
                 Log.e("RecipeSync", "Create failed", e)
-                _uiState.update { it.copy(isSaving = false, error = "Failed: ${e.message}") }
+                _uiState.update { it.copy(isSaving = false, error = com.example.smartpantry.core.userMessage(e)) }
             }
         }
     }

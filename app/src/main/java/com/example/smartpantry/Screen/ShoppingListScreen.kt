@@ -1,6 +1,7 @@
 package com.example.smartpantry.Screen
 
 
+import com.example.smartpantry.core.PurchaseReviewRules
 import com.example.smartpantry.core.validShoppingQuantity
 import com.example.smartpantry.core.shoppingQuantityHint
 import com.example.smartpantry.core.measuredUnits
@@ -14,11 +15,14 @@ import com.example.smartpantry.community.SmartPantrySectionHeader
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.FactCheck
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.UUID
 
@@ -46,16 +50,17 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import java.time.LocalDate
 import java.util.Locale
+import android.content.Intent
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
-import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextOverflow
 import com.example.smartpantry.Screen.CommunityScreen.cleanDisplay
 import com.example.smartpantry.Screen.CommunityScreen.cleanInput
 import com.example.smartpantry.remote.CommunityRepository
@@ -65,10 +70,8 @@ import java.time.Instant
 import java.time.ZoneId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
-import java.io.File
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
-import kotlin.math.ceil
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Serializable
 private data class ListItem(
@@ -94,6 +97,8 @@ private data class PantryBatch(
     val quantity: Double,
     val unit: String,
     val expiry: LocalDate,
+    val batchId: Long = 0L,
+    val location: String = "Pantry",
     val purchasedOn: LocalDate? = null,
     val note: String = "",
     val sourceItemId: Long? = null,
@@ -131,12 +136,19 @@ private fun normalizedUnit(unit: String?): String? = when (unit?.trim()?.lowerca
     "piece", "pieces", "pc", "pcs" -> "pcs"
     "ml" -> "mL"
     "l" -> "L"
+    "bags" -> "bag"
     "cartons" -> "carton"
     else -> unit?.trim()?.lowercase(Locale.ROOT)
 }
 
 private fun formatQuantity(quantity: Double): String =
     quantity.toBigDecimal().stripTrailingZeros().toPlainString()
+
+private fun reviewAmount(quantity: Double, unit: String): String {
+    val compact = quantity>0 && quantity<1 && unit in listOf("kg","L")
+    val value=if(compact) quantity.toBigDecimal().multiply(1000.toBigDecimal()).stripTrailingZeros().toPlainString() else formatQuantity(quantity)
+    return "$value ${if(compact) (if(unit=="kg") "g" else "mL") else unit}"
+}
 
 private fun parseQuantity(text: String, unit: String): Double? =
     text.replace(',', '.').toDoubleOrNull()?.takeIf {
@@ -166,6 +178,9 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
     var offline by remember { mutableStateOf(false) }
     var syncStatus by remember { mutableStateOf<String?>(null) }
     var pendingCount by remember { mutableStateOf(0) }
+    var pantryReadFailed by remember { mutableStateOf(false) }
+    var pantryKnown by remember { mutableStateOf(false) }
+    var reviewVersion by remember { mutableIntStateOf(0) }
     var ready by remember { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -181,7 +196,7 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e("ShoppingList", "Supabase operation failed", e)
+                android.util.Log.e("ShoppingList", "Supabase operation failed", e)
                 message = userMessage(e)
             } finally {
                 offline = repository.offline
@@ -194,50 +209,60 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
 
     @RequiresApi(Build.VERSION_CODES.O)
     suspend fun load(cacheOnly: Boolean = false, forceSync: Boolean = false) {
-        if(!cacheOnly) { repository.beginRefresh(); repository.syncPending(force=forceSync) }
-        val system = repository.catalog(cacheOnly).mapNotNull { ingredient ->
-            val id = ingredient.ingredientId ?: return@mapNotNull null
-            val unit = normalizedUnit(ingredient.unit)
-            ListItem(0, ingredient.ingredientName, 1.0, unit.orEmpty(),
-                imageRes = ingredientImage(ingredient.ingredientName,id), ingredientId = id, photoUri=ingredient.image?.takeIf{it.isNotBlank()})
-        }
-        val custom = repository.customIngredients(cacheOnly).map {
-            ListItem(0, it.name, 1.0, "pcs", customIngredientId = it.id, photoUri=it.imagePath?.takeIf{it.isNotBlank()})
-        }
-        val localCustom=repository.localIngredients().map { row -> ListItem(0,row.displayName.orEmpty(),1.0,row.unit,
-            ingredientId=row.ingredientId,customIngredientId=row.customIngredientId,photoUri=row.photoPath,
-            imageRes=ingredientImage(row.displayName.orEmpty(),row.ingredientId)) }
-        val bySystemId = system.associateBy { it.ingredientId }
-        val byCustomId = custom.associateBy { it.customIngredientId }
-        val remoteItems = repository.items(cacheOnly).map { row ->
-            val entry = if (row.ingredientId != null) bySystemId[row.ingredientId]
-            else byCustomId[row.customIngredientId]
-            (entry ?: ListItem(0, "Unavailable ingredient", 1.0, row.unit)).copy(
-                id = row.id, name=row.displayName ?: entry?.name ?: "Unavailable ingredient", quantity = row.purchaseQuantity, unit = row.unit,
-                purchased = row.isPurchased, ingredientId = row.ingredientId,
-                customIngredientId = row.customIngredientId, plannedQuantity = row.plannedQuantity,
-                unitPrice=row.unitPrice,handled=row.reviewHandled,photoUri=row.photoPath ?: entry?.photoUri,
-                imageRes=if(row.photoPath=="")null else ingredientImage(row.displayName ?: entry?.name.orEmpty(),row.ingredientId)
-            )
-        }
-        catalog = system.sortedWith(compareBy({ it.ingredientId !in catalogImages.keys }, { it.name })) +
-                custom.filter{old->system.none{it.name.trim().equals(old.name.trim(),true)}}.sortedBy { it.name } +
-                remoteItems.filter { row -> (system+custom).none { it.name.trim().equals(row.name.trim(),true) } }.distinctBy { it.name.trim().lowercase() }.map { it.copy(id=0) }
-        catalog=(catalog+localCustom.filter { local -> catalog.none{it.name.trim().equals(local.name.trim(),true)} }).sortedBy{it.name.lowercase()}
-        items = remoteItems
-        storedIds = repository.storedIds(cacheOnly)
-        ready = true
-        offline = repository.offline
-        pendingCount = repository.pendingCount
-        batches = emptyList()
-        batches = repository.pantry(cacheOnly).mapNotNull { row ->
-            val id = row.ingredientId ?: return@mapNotNull null
-            val entry = bySystemId[id] ?: return@mapNotNull null
-            val quantity = row.quantity?.takeIf { it.isFinite() && it > 0 } ?: return@mapNotNull null
-            val unit = normalizedUnit(row.quantityUnit) ?: return@mapNotNull null
-            val expiry = Instant.ofEpochMilli(row.expiredDate)
-                .atZone(ZoneId.systemDefault()).toLocalDate()
-            PantryBatch(entry.name, quantity, unit, expiry, ingredientId = id)
+        if(!cacheOnly) pantryReadFailed=false
+        try {
+            if(!cacheOnly) { repository.beginRefresh(); repository.syncPending(force=forceSync) }
+            val system = repository.catalog(cacheOnly).mapNotNull { ingredient ->
+                val id = ingredient.ingredientId ?: return@mapNotNull null
+                val unit = normalizedUnit(ingredient.unit)
+                ListItem(0, ingredient.ingredientName, 1.0, unit.orEmpty(),
+                    imageRes = ingredientImage(ingredient.ingredientName,id), ingredientId = id, photoUri=ingredient.image?.takeIf{it.isNotBlank()})
+            }
+            val custom = repository.customIngredients(cacheOnly).map {
+                ListItem(0, it.name, 1.0, "pcs", customIngredientId = it.id, photoUri=it.imagePath?.takeIf{it.isNotBlank()})
+            }
+            val localCustom=repository.localIngredients().map { row -> ListItem(0,row.displayName.orEmpty(),1.0,row.unit,
+                ingredientId=row.ingredientId,customIngredientId=row.customIngredientId,photoUri=row.photoPath,
+                imageRes=ingredientImage(row.displayName.orEmpty(),row.ingredientId)) }
+            val bySystemId = system.associateBy { it.ingredientId }
+            val byCustomId = custom.associateBy { it.customIngredientId }
+            val remoteItems = repository.items(cacheOnly).map { row ->
+                val entry = if (row.ingredientId != null) bySystemId[row.ingredientId]
+                else byCustomId[row.customIngredientId]
+                (entry ?: ListItem(0, "Unavailable ingredient", 1.0, row.unit)).copy(
+                    id = row.id, name=row.displayName ?: entry?.name ?: "Unavailable ingredient", quantity = row.purchaseQuantity, unit = row.unit,
+                    purchased = row.isPurchased, ingredientId = row.ingredientId,
+                    customIngredientId = row.customIngredientId, plannedQuantity = row.plannedQuantity,
+                    unitPrice=row.unitPrice,handled=row.reviewHandled,photoUri=row.photoPath ?: entry?.photoUri,
+                    imageRes=if(row.photoPath=="")null else ingredientImage(row.displayName ?: entry?.name.orEmpty(),row.ingredientId)
+                )
+            }
+            catalog = system.sortedWith(compareBy({ it.ingredientId !in catalogImages.keys }, { it.name })) +
+                    custom.filter{old->system.none{it.name.trim().equals(old.name.trim(),true)}}.sortedBy { it.name } +
+                    remoteItems.filter { row -> (system+custom).none { it.name.trim().equals(row.name.trim(),true) } }.distinctBy { it.name.trim().lowercase() }.map { it.copy(id=0) }
+            catalog=(catalog+localCustom.filter { local -> catalog.none{it.name.trim().equals(local.name.trim(),true)} }).sortedBy{it.name.lowercase()}
+            // Read everything first. Never publish an empty interim stock snapshot.
+            val nextStored = repository.storedIds(cacheOnly)
+            val nextBatches = repository.pantry(cacheOnly).mapNotNull { row ->
+                val id = row.ingredientId ?: return@mapNotNull null
+                val quantity = row.quantity?.takeIf { it.isFinite() && it > 0 } ?: return@mapNotNull null
+                val unit = normalizedUnit(row.quantityUnit) ?: return@mapNotNull null
+                val expiry = Instant.ofEpochMilli(row.expiredDate)
+                    .atZone(ZoneId.of("Asia/Kuala_Lumpur")).toLocalDate()
+                PantryBatch(bySystemId[id]?.name ?: "Ingredient #$id", quantity, unit, expiry,
+                    batchId=row.id ?: 0L, ingredientId=id)
+            }
+            items = remoteItems
+            storedIds = nextStored
+            batches = nextBatches
+            pantryKnown = repository.hasPantryCache
+            offline = repository.offline
+            pendingCount = repository.pendingCount
+            ready = true
+            reviewVersion++
+        } catch(t: Exception) {
+            if(!cacheOnly && t !is CancellationException) pantryReadFailed=true
+            throw t
         }
     }
 
@@ -256,14 +281,15 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
     var page by rememberSaveable { mutableStateOf(ShoppingPage.LIST) }
     val itemSaver = Saver<ListItem?, String>(save={Json.encodeToString(it)},restore={Json.decodeFromString<ListItem?>(it)})
     var editingItem by rememberSaveable(stateSaver=itemSaver) { mutableStateOf<ListItem?>(null) }
-    var reviewedIds by remember { mutableStateOf(emptySet<Long>()) }
     var selectedItem by rememberSaveable(stateSaver=itemSaver) { mutableStateOf<ListItem?>(null) }
 
     val toBuy = items.filterNot { it.purchased }
     val purchased = items.filter { it.purchased }
 
     val suggestions = buildReviewSuggestions(toBuy, batches)
-    reviewedIds = items.filter { it.handled }.map { it.id }.toSet()
+    val reviewedIds = remember(suggestions,reviewVersion) {
+        suggestions.filter { repository.reviewDecision(it.item.id)==it.fingerprint }.map { it.item.id }.toSet()
+    }
     val reviewCount = suggestions.count { it.needsReview && it.item.id !in reviewedIds }
 
     fun goBack() {
@@ -313,7 +339,7 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
         color = MaterialTheme.colorScheme.background
     ) {
         Column(Modifier.fillMaxSize()) {
-            SmartPantrySectionHeader(title =title, showBack =true, onBack ={if(!busy)goBack()})
+            SmartPantrySectionHeader(title=title,showBack=true,onBack={if(!busy)goBack()})
             // Shared header, spacing and theme with Community.
             key(page) {
                 PullToRefreshBox(isRefreshing=refreshing,onRefresh={if(!busy){refreshing=true;mutate{try{load(forceSync=true)}finally{refreshing=false}}}},modifier=Modifier.fillMaxSize()) {
@@ -347,7 +373,12 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
                                         ShoppingMetric(toBuy.size,"To buy",Modifier.weight(1f))
                                         ShoppingMetric(purchased.size,"Purchased",Modifier.weight(1f))
                                     }
-                                    if (reviewCount > 0) {
+                                    TextButton(onClick = { page=ShoppingPage.REVIEW; mutate { load() } },enabled=!busy) {
+                                        Icon(Icons.AutoMirrored.Filled.FactCheck,null,Modifier.size(18.dp)); Spacer(Modifier.width(6.dp))
+                                        Text(if(busy) "Checking pantry…" else "Purchase Review")
+                                    }
+                                    if (!pantryKnown) Text("Pantry stock has not loaded yet. Connect and pull down to retry.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                    if (pantryKnown && reviewCount > 0) {
                                         ShoppingPanel(tinted = true) {
                                             Row(verticalAlignment = Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
                                                 Icon(Icons.Default.ShoppingBasket,null,tint=MaterialTheme.colorScheme.primary,modifier=Modifier.size(28.dp))
@@ -355,7 +386,7 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
                                                     Text(reviewCountLabel(reviewCount),
                                                         style = MaterialTheme.typography.titleMedium,
                                                         fontWeight = FontWeight.Bold)
-                                                    Text("Before you shop",
+                                                    Text(if(offline || pantryReadFailed) "Based on saved pantry stock" else "Use pantry stock before buying more",
                                                         style = MaterialTheme.typography.bodySmall)
                                                 }
                                                 TextButton(onClick = { page = ShoppingPage.REVIEW }) {
@@ -423,11 +454,17 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
                                 ShoppingPage.REVIEW -> ShoppingReview(
                                     suggestions = suggestions,
                                     handled = reviewedIds,
-                                    onKeep = { id -> items.firstOrNull{it.id==id}?.let { item -> mutate{saveItem(item.copy(handled=true))} } },
+                                    stockKnown=pantryKnown, checking=busy, stale=offline || pantryReadFailed, lastUpdated=repository.pantryUpdatedAt,
+                                    onEdit = { editingItem=it },
+                                    onKeep = { id -> suggestions.firstOrNull { it.item.id==id }?.let {
+                                        mutate { repository.rememberReview(id,it.fingerprint); reviewVersion++ }
+                                    } },
                                     onChange = { item, quantity ->
                                         mutate {
-                                            saveItem(item.copy(quantity = quantity,plannedQuantity=quantity,handled=true))
-                                            reviewedIds = reviewedIds + item.id
+                                            saveItem(item.copy(quantity = quantity,handled=false))
+                                            buildReviewSuggestions(items.filterNot { it.purchased },batches).firstOrNull { it.item.id==item.id }?.let {
+                                                repository.rememberReview(item.id,it.fingerprint); reviewVersion++
+                                            }
                                         }
                                     },
                                     onRemove = { item -> removeItem(item) }
@@ -440,7 +477,7 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
                                         busy=busy,
                                         onConfirm = { batch -> mutate {
                                             val storedItemId=repository.transfer(item.id,batch.name,batch.quantity,batch.unit,
-                                                batch.purchasedOn!!.toString(),batch.expiry.toString(),cleanDisplay(batch.note),batch.photoUri)
+                                                batch.purchasedOn!!.toString(),batch.expiry.toString(),cleanDisplay(batch.note),batch.photoUri,batch.location)
                                             storedIds=storedIds+storedItemId
                                             page=ShoppingPage.LIST
                                             onInventoryChanged()
@@ -486,7 +523,7 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
                     onSave = { edited ->
                         mutate {
                             saveItem(edited)
-                            reviewedIds = reviewedIds - item.id
+                            reviewVersion++
                             editingItem = null
                         }
                     },
@@ -543,7 +580,7 @@ private fun FoodThumbnail(item: ListItem, size: Int = 38) {
     Box(Modifier.size(size.dp),contentAlignment=Alignment.Center) {
         if(!photoLoaded && item.photoUri!="" && item.imageRes!=null) Image(painterResource(item.imageRes),null,Modifier.fillMaxSize(),contentScale=ContentScale.Fit)
         else if(!photoLoaded) Icon(Icons.Default.Eco,null,tint=MaterialTheme.colorScheme.primary,modifier=Modifier.size((size*0.6).dp))
-        if(!item.photoUri.isNullOrBlank()) AsyncImage(model=if(item.photoUri.startsWith("/")) File(item.photoUri) else item.photoUri,
+        if(!item.photoUri.isNullOrBlank()) AsyncImage(model=if(item.photoUri.startsWith("/"))java.io.File(item.photoUri) else item.photoUri,
             contentDescription=item.name,modifier=Modifier.fillMaxSize(),contentScale=ContentScale.Fit,
             onSuccess={photoLoaded=true},onError={photoLoaded=false})
     }
@@ -573,7 +610,7 @@ private fun ShoppingRow(
             )
             FoodThumbnail(item,48)
             Column(Modifier.weight(1f).padding(start = 6.dp)) {
-                Text(item.name, fontWeight = FontWeight.Bold,style=MaterialTheme.typography.titleMedium,maxLines=2,overflow= TextOverflow.Ellipsis)
+                Text(item.name, fontWeight = FontWeight.Bold,style=MaterialTheme.typography.titleMedium,maxLines=2,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 Text(
                     "${formatQuantity(item.quantity)} ${item.unit}",
                     style = MaterialTheme.typography.bodySmall
@@ -711,58 +748,31 @@ private fun ShoppingEditor(
 }
 
 private data class ReviewSuggestion(
-    val item: ListItem,
-    val stock: Double,
-    val buy: Double,
-    val expiring: Double,
-    val batches: List<PantryBatch>,
-    val differentUnit: Boolean
+    val item: ListItem, val stock: Double, val buy: Double, val expiring: Double,
+    val urgent: Double, val expired: Int, val batches: List<PantryBatch>,
+    val differentUnit: Boolean, val possibleDuplicate: Boolean, val fingerprint: String
 )
-
 private val ReviewSuggestion.needsReview: Boolean
-    get() = buy < item.quantity || differentUnit
-
+    get() = buy + 0.0000001 < item.quantity || differentUnit || possibleDuplicate || expiring>0 || expired>0
 private fun reviewCountLabel(count: Int): String =
     "$count ${if (count == 1) "item" else "items"} worth reviewing"
-
-@RequiresApi(Build.VERSION_CODES.O)
-private fun buildReviewSuggestions(
-    items: List<ListItem>,
-    batches: List<PantryBatch>
-): List<ReviewSuggestion> {
-    val today = LocalDate.now()
-    val reserved = mutableMapOf<Pair<String, String>, Double>()
-    return items.mapNotNull { item ->
-        val nameKey = item.name.trim().lowercase(Locale.ROOT)
-        val group = item.unit
-        val factor = 1.0
-        val key = nameKey to group
-        val used = reserved[key] ?: 0.0
-        val matching = batches.filter { it.name.trim().equals(item.name.trim(),true) && !it.expiry.isBefore(today) && it.quantity>0 && it.quantity.isFinite() }
-        val comparable = matching.mapNotNull { batch ->
-            val base = batch.unit
-            if (base != group) return@mapNotNull null
-            val batchFactor = 1.0
-            batch.copy(quantity = batch.quantity * batchFactor / factor, unit = item.unit)
-        }.sortedBy { it.expiry }
-
-        val stock = (comparable.sumOf { it.quantity } - used / factor).coerceAtLeast(0.0)
-        val covered = minOf(item.plannedQuantity, stock)
-        reserved[key] = used + covered * factor
-        val expiring = (comparable.filter { !it.expiry.isAfter(today.plusDays(1)) }
-            .sumOf { it.quantity } - used / factor).coerceAtLeast(0.0)
-        val missing = (item.plannedQuantity - stock).coerceAtLeast(0.0)
-        val buy = if(item.unit in measuredUnits) ceil((missing-0.00000001).coerceAtLeast(0.0)*1000) /1000 else ceil(missing)
-        ReviewSuggestion(item, stock, buy, expiring, comparable,
-            comparable.isEmpty() && matching.isNotEmpty())
-    }
-
+private fun buildReviewSuggestions(items: List<ListItem>, batches: List<PantryBatch>): List<ReviewSuggestion> {
+    val byId=items.associateBy { it.id }
+    return PurchaseReviewRules.calculate(
+        items.map { PurchaseReviewRules.Item(it.id,it.ingredientId,it.name,it.plannedQuantity,it.quantity,it.unit) },
+        batches.map { PurchaseReviewRules.Batch(it.batchId,it.ingredientId,it.name,it.quantity,it.unit,it.expiry) },
+        LocalDate.now(ZoneId.of("Asia/Kuala_Lumpur"))
+    ).map { r -> ReviewSuggestion(byId.getValue(r.item.id),r.stock,r.buy,r.soon,r.urgent,r.expired,
+        r.batches.map { PantryBatch(it.name,it.quantity,it.unit,it.expiry,batchId=it.id,ingredientId=it.ingredientId) },
+        r.manual,r.possibleDuplicate,r.fingerprint) }
 }
 
 @Composable
 private fun ShoppingReview(
     suggestions: List<ReviewSuggestion>,
     handled: Set<Long>,
+    stockKnown: Boolean, checking: Boolean, stale: Boolean, lastUpdated: Long,
+    onEdit: (ListItem) -> Unit,
     onKeep: (Long) -> Unit,
     onChange: (ListItem, Double) -> Unit,
     onRemove: (ListItem) -> Unit
@@ -778,11 +788,20 @@ private fun ShoppingReview(
     val warningBackground=if(colors.background.luminance()<0.5f)Color(0xFF463719) else Color(0xFFFFF4D8)
     val warningText=if(colors.background.luminance()<0.5f)Color(0xFFFFE0A2) else Color(0xFF795410)
 
-    Text("See what you can use from your pantry.", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+    if(!stockKnown) {
+        Text(if(checking) "Checking your pantry…" else "Pantry stock is unavailable. Pull down to retry.")
+        return
+    }
+    if(stale) {
+        val stamp=if(lastUpdated>0) java.time.format.DateTimeFormatter.ofPattern("d MMM, HH:mm",Locale.ENGLISH).withZone(ZoneId.of("Asia/Kuala_Lumpur")).format(Instant.ofEpochMilli(lastUpdated)) else "your last successful refresh"
+        Text("Saved pantry snapshot from $stamp. Latest stock could not be confirmed. Check availability before changing your list.",style=MaterialTheme.typography.bodySmall,color=colors.onSurfaceVariant)
+    }
+    Text("Plan for the next 7 days. Use your pantry stock before buying more.", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
     ShoppingPanel(tinted = true) {
-        Text(if (pending.isEmpty()) "All caught up" else reviewCountLabel(pending.size),
+        Text(if(checking) "Checking pantry…" else if (pending.isEmpty()) "No new suggestions" else reviewCountLabel(pending.size),
             style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
     }
+    if(handled.isNotEmpty()) Text("${handled.size} reviewed for this list and pantry snapshot",style=MaterialTheme.typography.bodySmall,color=colors.onSurfaceVariant)
     if (pending.isNotEmpty()) {
         Text("Suggested changes", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
     }
@@ -797,32 +816,55 @@ private fun ShoppingReview(
                         Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(7.dp)) {
                             Text(item.name,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
                             Surface(shape=RoundedCornerShape(10.dp),color=colors.primaryContainer) {
-                                Text(when { suggestion.differentUnit -> "Check pantry units";suggestion.buy==0.0 -> "You may be able to skip buying";else -> "Buy ${formatQuantity(suggestion.buy)} ${item.unit} instead of ${formatQuantity(item.quantity)}" },
+                                Text(when {
+                                    suggestion.differentUnit -> "Check package sizes and units"
+                                    suggestion.buy==0.0 -> "You may be able to remove this item"
+                                    suggestion.buy + 0.0000001 < item.quantity -> "Keep only ${reviewAmount(suggestion.buy,item.unit)} on your list"
+                                    suggestion.possibleDuplicate -> "Check a possible duplicate ingredient"
+                                    suggestion.expiring>0 -> "Use your pantry stock first"
+                                    else -> "Expired stock is excluded"
+                                },
                                     Modifier.padding(9.dp,6.dp),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Bold,color=colors.onPrimaryContainer)
                             }
-                            Text(if(suggestion.differentUnit) "Stock uses a different unit." else "${formatQuantity(item.plannedQuantity)} ${item.unit} planned · ${formatQuantity(suggestion.stock)} in pantry",style=MaterialTheme.typography.bodySmall,color=colors.onSurfaceVariant)
+                            Text("Planned: ${reviewAmount(item.plannedQuantity,item.unit)} · Available: ${reviewAmount(suggestion.stock,item.unit)}",style=MaterialTheme.typography.bodySmall,color=colors.onSurfaceVariant)
+                            if(!suggestion.differentUnit) Text("Suggested list amount: ${reviewAmount(suggestion.buy,item.unit)}",style=MaterialTheme.typography.bodySmall,fontWeight=FontWeight.SemiBold)
+                            if(suggestion.stock>item.plannedQuantity) Text("${reviewAmount(suggestion.stock-item.plannedQuantity,item.unit)} more than this plan needs. Use existing stock to avoid waste.",style=MaterialTheme.typography.bodySmall,color=colors.primary)
+                            if(suggestion.differentUnit) Text("Some pantry units cannot be converted. Check stock manually.",style=MaterialTheme.typography.bodySmall)
+                            if(suggestion.possibleDuplicate) Text("A similar name has a different ingredient ID. It has not been counted.",style=MaterialTheme.typography.bodySmall)
+                            if(suggestion.expired>0) Text("${suggestion.expired} expired batch(es) excluded.",style=MaterialTheme.typography.bodySmall,color=colors.error)
                         }
                     }
-                    if(suggestion.expiring>0) Surface(shape=RoundedCornerShape(10.dp),color=warningBackground) {
-                        Row(Modifier.padding(9.dp),horizontalArrangement=Arrangement.spacedBy(7.dp),verticalAlignment=Alignment.CenterVertically) {
-                            Icon(Icons.Default.Schedule,null,Modifier.size(18.dp),tint=warningText)
-                            Text("Use ${formatQuantity(suggestion.expiring)} ${item.unit} expiring by tomorrow first",style=MaterialTheme.typography.bodySmall,color=warningText)
+                    if(suggestion.expiring>0) Surface(shape=RoundedCornerShape(10.dp),color=if(suggestion.urgent>0)colors.errorContainer else warningBackground) {
+                        Row(Modifier.padding(10.dp),horizontalArrangement=Arrangement.spacedBy(7.dp),verticalAlignment=Alignment.Top) {
+                            val tone=if(suggestion.urgent>0)colors.onErrorContainer else warningText
+                            Icon(if(suggestion.urgent>0)Icons.Default.WarningAmber else Icons.Default.Schedule,null,Modifier.size(18.dp),tint=tone)
+                            Column(verticalArrangement=Arrangement.spacedBy(3.dp)) {
+                                Text(if(suggestion.urgent>0) "Use first · stock expires today or tomorrow" else "Use first · stock expires within 3 days",style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.Bold,color=tone)
+                                Text("${reviewAmount(suggestion.expiring,item.unit)} expires within 3 days.${if(suggestion.urgent>0) " ${reviewAmount(suggestion.urgent,item.unit)} expires today or tomorrow." else ""} Reduce buying only if you can use it in time.",style=MaterialTheme.typography.bodySmall,color=tone)
+                            }
                         }
                     }
-                    if(suggestion.batches.isNotEmpty()&&(suggestion.expiring>0||suggestion.buy==0.0)) {
+                    if(suggestion.batches.isNotEmpty()) {
                         FilledTonalButton(onClick={showBatches=!showBatches},modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(12.dp)) {
                             Icon(Icons.Default.Inventory2,null,Modifier.size(20.dp));Spacer(Modifier.width(8.dp))
                             Text("${suggestion.batches.size} pantry batches",Modifier.weight(1f));ShoppingActionIcon(expanded=showBatches)
                         }
                         if(showBatches) suggestion.batches.forEach { batch ->
-                            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) { Text("${formatQuantity(batch.quantity)} ${batch.unit}",style=MaterialTheme.typography.bodySmall);Text(batch.expiry.toString(),style=MaterialTheme.typography.bodySmall,color=colors.onSurfaceVariant) }
+                            Column(verticalArrangement=Arrangement.spacedBy(3.dp)) {
+                            if(batch.ingredientId!=item.ingredientId) Text("${batch.name} · different ingredient ID (not counted)",style=MaterialTheme.typography.labelSmall,color=colors.onSurfaceVariant)
+                            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) { Text("${formatQuantity(batch.quantity)} ${batch.unit}",style=MaterialTheme.typography.bodySmall);Text(if(batch.expiry.isBefore(LocalDate.now(ZoneId.of("Asia/Kuala_Lumpur")))) "Expired · ${batch.expiry}" else "Expires ${batch.expiry}",style=MaterialTheme.typography.bodySmall,color=colors.onSurfaceVariant) }
+                            }
                         }
                     }
-                    if(!suggestion.differentUnit&&suggestion.buy>0) Button(onClick={adjustment=suggestion},modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(12.dp)) { Text("Change to ${formatQuantity(suggestion.buy)} ${item.unit}") }
-                    else Row(horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-                        if(!suggestion.differentUnit) OutlinedButton(onClick={removal=item},modifier=Modifier.weight(1f),shape=RoundedCornerShape(12.dp)) { Text("Remove from list") }
-                        OutlinedButton(onClick={onKeep(item.id)},modifier=Modifier.weight(1f),shape=RoundedCornerShape(12.dp)) { Text("Keep item") }
+                    if(suggestion.differentUnit || suggestion.possibleDuplicate) {
+                        OutlinedButton(onClick={onEdit(item)},enabled=!checking,modifier=Modifier.fillMaxWidth()) { Text("Edit quantity or ingredient") }
                     }
+                    if(!suggestion.differentUnit && suggestion.buy + 0.0000001 < item.quantity) {
+                        Button(onClick={if(suggestion.buy==0.0)removal=item else adjustment=suggestion},enabled=!checking,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(12.dp)) {
+                            Text(if(suggestion.buy==0.0) "Remove from list" else "Change list to ${reviewAmount(suggestion.buy,item.unit)}")
+                        }
+                    }
+                    OutlinedButton(onClick={onKeep(item.id)},enabled=!checking,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(12.dp)) { Text("Keep current amount") }
                 }
             }
         }
@@ -833,7 +875,7 @@ private fun ShoppingReview(
             modifier = Modifier.fillMaxWidth(),
             shape = shopShape
         ) {
-            Text("No changes needed · ${unchanged.size}", Modifier.weight(1f))
+            Text("Other items · ${unchanged.size}", Modifier.weight(1f))
             Text(if (showUnchanged) "↑" else "↓")
         }
         if (showUnchanged) unchanged.forEach {
@@ -846,7 +888,7 @@ private fun ShoppingReview(
             onDismissRequest = { adjustment = null },
             title = { Text("Buy fewer ${item.name.lowercase(Locale.ROOT)}?") },
             text = {
-                Text("Change ${formatQuantity(item.quantity)} ${item.unit} to ${formatQuantity(suggestion.buy)} ${item.unit} on your shopping list.")
+                Text("Reduce the shopping list from ${formatQuantity(item.quantity)} ${item.unit} to ${reviewAmount(suggestion.buy,item.unit)}. Your plan stays at ${formatQuantity(item.plannedQuantity)} ${item.unit}. Use the pantry stock before it expires to avoid waste.")
             },
             confirmButton = {
                 Button(onClick = {
@@ -882,6 +924,7 @@ private fun PantryEditor(
     var quantityText by rememberSaveable { mutableStateOf(formatQuantity(item.quantity)) }
     var unit by rememberSaveable { mutableStateOf(item.unit) }
     var purchasedOnText by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
+    var location by rememberSaveable { mutableStateOf("Pantry") }
     var expiryText by rememberSaveable { mutableStateOf("") }
     var note by rememberSaveable { mutableStateOf("") }
 
@@ -913,6 +956,7 @@ private fun PantryEditor(
         ShoppingCalendar("Expiry date", expiry, earliest = purchasedOn) {
             expiryText = it.toString()
         }
+        StorageLocationField(location) { location=it }
         OutlinedTextField(
             value = note,
             onValueChange = { input ->
@@ -942,6 +986,7 @@ private fun PantryEditor(
                         expiry = expiry,
                         purchasedOn = purchasedOn,
                         note = note.trim(),
+                        location = location,
                         sourceItemId = item.id,
                         imageRes = item.imageRes,
                         photoUri = photo
@@ -985,7 +1030,7 @@ private fun ShoppingQuantityRow(
             ExposedDropdownMenuBox(expanded=expanded,onExpandedChange={expanded=it},modifier=Modifier.weight(1f)) {
                 OutlinedTextField(value=unit,onValueChange={},readOnly=true,label={Text("Unit")},singleLine=true,
                     trailingIcon={ExposedDropdownMenuDefaults.TrailingIcon(expanded=expanded)},shape=RoundedCornerShape(12.dp),
-                    modifier=Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth())
+                    modifier=Modifier.menuAnchor(type = androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth())
                 ExposedDropdownMenu(expanded=expanded,onDismissRequest={expanded=false}) {
                     shoppingUnits.forEach { option -> DropdownMenuItem(text={Text(option)},onClick={expanded=false;onUnit(option)}) }
                 }
@@ -1001,13 +1046,13 @@ private fun ShoppingQuantityRow(
 @Composable
 private fun ShoppingCalendar(label:String,date:LocalDate?,earliest:LocalDate?=null,latest:LocalDate?=null,onDate:(LocalDate)->Unit) {
     var calendarOpen by rememberSaveable { mutableStateOf(false) }
-    fun utc(day:LocalDate)=day.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
-    fun day(value:Long)=Instant.ofEpochMilli(value).atZone(ZoneOffset.UTC).toLocalDate()
+    fun utc(day:LocalDate)=day.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+    fun day(value:Long)=Instant.ofEpochMilli(value).atZone(java.time.ZoneOffset.UTC).toLocalDate()
     Column {
         Text(label,style=MaterialTheme.typography.labelLarge)
         OutlinedButton(onClick={calendarOpen=true},modifier=Modifier.fillMaxWidth().heightIn(min=54.dp),shape=RoundedCornerShape(12.dp)) {
             Icon(Icons.Default.CalendarMonth,null,Modifier.size(20.dp));Spacer(Modifier.width(10.dp))
-            Text(date?.format(DateTimeFormatter.ofPattern("d MMM yyyy",Locale.ENGLISH)) ?: "Select date",Modifier.weight(1f))
+            Text(date?.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy",Locale.ENGLISH)) ?: "Select date",Modifier.weight(1f))
             ShoppingActionIcon(expanded=calendarOpen)
         }
     }
@@ -1033,7 +1078,7 @@ private fun ShoppingPhotoEditor(item: ListItem, onPhotoChange: (String?) -> Unit
         if(uri!=null)photoScope.launch {
             try {
                 val path= CommunityRepository().importImage(context,uri)
-                onPhotoChange(Uri.fromFile(File(path)).toString());failed=false
+                onPhotoChange(Uri.fromFile(java.io.File(path)).toString());failed=false
             } catch(cancelled:CancellationException){throw cancelled} catch(error:Exception){failed=true}
         }
     }
@@ -1075,7 +1120,7 @@ private fun ShoppingIngredientPicker(
     val photoScope=rememberCoroutineScope()
     val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if(uri!=null)photoScope.launch {
-            try { customPhoto=Uri.fromFile(File(CommunityRepository().importImage(context,uri))).toString();photoError=false } catch(cancelled:CancellationException){throw cancelled} catch(error:Exception){photoError=true}
+            try { customPhoto=Uri.fromFile(java.io.File(CommunityRepository().importImage(context,uri))).toString();photoError=false } catch(cancelled:CancellationException){throw cancelled} catch(error:Exception){photoError=true}
         }
     }
 
@@ -1233,4 +1278,12 @@ private fun ShoppingActionIcon(cart: Boolean = false, expanded: Boolean = false)
             segment(12f, middle, 18f, outer)
         }
     }
+}
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun StorageLocationField(value:String,onChange:(String)->Unit) {
+ var expanded by remember { mutableStateOf(false) }
+ ExposedDropdownMenuBox(expanded=expanded,onExpandedChange={expanded=it}) {
+  OutlinedTextField(value,{},Modifier.menuAnchor(type = androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),readOnly=true,label={Text("Storage location")},trailingIcon={ExposedDropdownMenuDefaults.TrailingIcon(expanded=expanded)})
+  ExposedDropdownMenu(expanded=expanded,onDismissRequest={expanded=false}) {listOf("Pantry","Fridge","Freezer").forEach { location->DropdownMenuItem(text={Text(location)},onClick={onChange(location);expanded=false})} }
+ }
 }

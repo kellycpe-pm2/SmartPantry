@@ -27,7 +27,8 @@ internal data class RecipeDraft(
     val recipeId: Long = 0, val title: String = "", val category: String = "Malaysian",
     val description: String = "", val image: String = "", val vegan: Boolean = false, val source: String = "",
     val ingredients: List<DraftIngredient> = emptyList(), val steps: List<String> = listOf(""),
-    val requestId: String = UUID.randomUUID().toString()
+    val requestId: String = UUID.randomUUID().toString(),
+    val cuisine: String = category.takeIf { it in listOf("Malaysian","Chinese","Asian","Western","Other") }.orEmpty(), val dishType: String = "", val dietary: String = "Unspecified"
 ) {
     fun problem(): String? {
         if (title.trim().length !in 1..150) return "Enter a title with 1–150 characters."

@@ -34,6 +34,12 @@ private val LightColorScheme = lightColorScheme(
     outline = BrandBorder,
     outlineVariant = BrandBorder,
 
+    surfaceContainerLowest=BrandBackground, surfaceContainerLow=BrandSecondaryBg,
+    surfaceContainer=BrandSecondaryBg, surfaceContainerHigh=BrandSecondaryBg, surfaceContainerHighest=BrandSecondaryBg,
+    surfaceTint=BrandPrimaryDark, surfaceBright=BrandBackground, surfaceDim=BrandSecondaryBg,
+    tertiary=BrandPrimaryDark, onTertiary=Color.White, tertiaryContainer=BrandPrimary, onTertiaryContainer=BrandBodyText,
+    inverseSurface=BrandBodyText, inverseOnSurface=BrandSecondaryBg, inversePrimary=BrandPrimary,
+    errorContainer=Color(0xFFFFEDEA), onErrorContainer=Color(0xFF8C2424),
     error = BrandError,
     onError = Color.White
 )
@@ -62,6 +68,12 @@ private val DarkColorScheme = darkColorScheme(
     outline = BrandMutedText,
     outlineVariant = BrandMutedText,
 
+    surfaceContainerLowest=Color(0xFF14282A), surfaceContainerLow=Color(0xFF203638),
+    surfaceContainer=Color(0xFF263B3D), surfaceContainerHigh=Color(0xFF2D4547), surfaceContainerHighest=Color(0xFF365153),
+    surfaceTint=BrandPrimary, surfaceBright=Color(0xFF365153), surfaceDim=Color(0xFF14282A),
+    tertiary=BrandPrimary, onTertiary=BrandBodyText, tertiaryContainer=BrandPrimaryDark, onTertiaryContainer=Color.White,
+    inverseSurface=BrandSecondaryBg, inverseOnSurface=BrandBodyText, inversePrimary=BrandPrimaryDark,
+    errorContainer=Color(0xFF5C2828), onErrorContainer=Color(0xFFFFDAD6),
     error = Color(0xFFFFB4AB),
     onError = BrandError
 )

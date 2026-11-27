@@ -59,6 +59,7 @@ import com.example.smartpantry.Screen.ShoppingListScreen
 import com.example.smartpantry.Screen.SplashScreen
 import com.example.smartpantry.storage.remote.supabase
 import com.example.smartpantry.ui.home.UserDashboardScreen
+import com.example.smartpantry.ui.home.WasteLogScreen
 import com.example.smartpantry.viewmodel.AdminViewModel
 import com.example.smartpantry.viewmodel.AuthViewModel
 import com.example.smartpantry.viewmodel.IngredientUserViewModel
@@ -123,7 +124,7 @@ fun AppNavHost(
     val currentRoute = backStackEntry?.destination?.route
 
     var communityRoot by rememberSaveable { mutableStateOf(true) }
-    val bottomNavRoutes = listOf("home", "pantry", "recipes", "records", "profile")
+    val bottomNavRoutes = listOf("home", "pantry", "recipes", "records?week={week}", "profile")
 
     val sessionStatus by supabase.auth.sessionStatus.collectAsState()
 
@@ -140,37 +141,11 @@ fun AppNavHost(
         }
     }
 
-    Scaffold(
-        bottomBar = {
-            if (currentRoute in bottomNavRoutes && (currentRoute != "recipes" || communityRoot)) {
-                FloatingBottomBar(
-                    items = items,
-                    currentRoute = currentRoute,
-                    onTabSelected = { route ->
-                        if (route != navController.currentBackStackEntry?.destination?.route) {
-                            if (route == "home") {
-                                goHome()
-                            } else navController.navigate(route) {
-                                launchSingleTop = true
-                                popUpTo("home") { saveState = true }
-                                restoreState = true
-                            }
-                        }
-                    },
-                    onAddClick = {
-                        val routeToAdd = if (currentRoute == "recipes") "community_create" else "add"
-                        navController.navigate(routeToAdd) {
-                            launchSingleTop = true
-                        }
-                    }
-                )
-            }
-        }
-    ) { padding ->
+    Box(Modifier.fillMaxSize()) {
         NavHost(
             navController = navController,
             startDestination = startRoute,
-            modifier = Modifier.padding(padding),
+            modifier = Modifier.fillMaxSize().statusBarsPadding(),
             enterTransition = { fadeIn(tween(180)) },
             exitTransition = { fadeOut(tween(140)) },
             popEnterTransition = { fadeIn(tween(180)) },
@@ -231,7 +206,13 @@ fun AppNavHost(
                         onShoppingList = { navController.navigate("shopping_list") },
                         onPantry = { navController.navigate("pantry") },
                         onRecipes = { navController.navigate("recipes") },
-                        onRecords = { navController.navigate("records") }
+                        onRecords = { navController.navigate("records?week=true") },
+                        onIngredient = { id -> navController.navigate("ingredient_detail/$id") },
+                        onPantryBatch = { id,batch -> navController.navigate("ingredient_detail/$id?batchId=$batch") },
+                        onCreateIngredient = {navController.navigate("add")},
+                        onAddPantry = {navController.navigate("add_ingredient")},
+                        onCreateRecipe = {navController.navigate("community_create")},
+                        userName = profile?.displayName.orEmpty()
                     )
                 }
             }
@@ -250,12 +231,13 @@ fun AppNavHost(
             }
 
             composable(
-                route = "ingredient_detail/{ingredientId}",
-                arguments = listOf(navArgument("ingredientId") { type = NavType.LongType })
+                route = "ingredient_detail/{ingredientId}?batchId={batchId}",
+                arguments = listOf(navArgument("ingredientId") { type = NavType.LongType },navArgument("batchId"){type=NavType.LongType;defaultValue=0L})
             ) { entry ->
                 val id = entry.arguments?.getLong("ingredientId") ?: 0L
                 IngredientDetailScreen(
                     ingredientId = id,
+                    focusBatchId=entry.arguments?.getLong("batchId") ?: 0L,
                     onBackClick = { navController.popBackStack() },
                     onEditClick = { navController.navigate("edit_ingredient/$id") },
                     onAddInventoryClick = { _ -> navController.navigate("add_ingredient") },
@@ -348,7 +330,9 @@ fun AppNavHost(
                 )
             }
 
-            composable("records") { UserDashboardScreen() }
+            composable("records?week={week}",arguments=listOf(navArgument("week"){type=NavType.BoolType;defaultValue=false})) { entry ->
+                WasteLogScreen(onBack=goHome,initialWeek=entry.arguments?.getBoolean("week")==true)
+            }
 
             composable("admin") {
                 if (profile?.role == "admin") {
@@ -463,6 +447,13 @@ fun AppNavHost(
                 )
             }
         }
+        if(currentRoute in bottomNavRoutes && (currentRoute!="recipes" || communityRoot)) {
+            Box(Modifier.align(Alignment.BottomCenter)) {
+                FloatingBottomBar(items,currentRoute,{route->
+                    if(route=="home")goHome() else if(route!=navController.currentBackStackEntry?.destination?.route)navController.navigate(route){launchSingleTop=true;popUpTo("home"){saveState=true};restoreState=true}
+                },{})
+            }
+        }
     }
 }
 
@@ -519,41 +510,8 @@ private fun FloatingBottomBar(
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val leftTabs = items.take(2)
-            val rightTabs = items.takeLast(3)
-
-            leftTabs.forEach { item ->
-                NavBarTab(
-                    item = item,
-                    selected = currentRoute == item.route,
-                    onClick = { onTabSelected(item.route) },
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
-            FloatingActionButton(
-                onClick = onAddClick,
-                containerColor = scheme.primary,
-                contentColor = scheme.onPrimary,
-                shape = CircleShape,
-                modifier = Modifier
-                    .padding(horizontal = 6.dp)
-                    .size(52.dp)
-            ) {
-                Text(
-                    text = "+",
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            rightTabs.forEach { item ->
-                NavBarTab(
-                    item = item,
-                    selected = currentRoute == item.route,
-                    onClick = { onTabSelected(item.route) },
-                    modifier = Modifier.weight(1f)
-                )
+            items.forEach { item ->
+                NavBarTab(item=item,selected=currentRoute?.substringBefore('?')==item.route,onClick={onTabSelected(item.route)},modifier=Modifier.weight(1f))
             }
         }
     }

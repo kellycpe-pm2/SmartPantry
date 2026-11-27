@@ -42,7 +42,7 @@ fun ProfileScreen(
             add(MenuItem(Icons.Filled.Lock, "Change Password", onChangePassword))
         } else {
             add(MenuItem(Icons.Filled.Lock, "Account & Security", onAccountSecurity))
-            add(MenuItem(Icons.Filled.Star, "My Favourite", onMyFavourite))
+            add(MenuItem(Icons.Filled.Star, "Favourites", onMyFavourite))
             add(MenuItem(Icons.Filled.ShoppingCart, "Shopping List", onShoppingList))
         }
         add(MenuItem(Icons.AutoMirrored.Filled.ExitToApp, "Log Out", onLogout))
@@ -51,7 +51,7 @@ fun ProfileScreen(
     // Surface sets the background AND the default text/icon colour from the theme,
     // so Text and Icon use BodyText instead of black, wherever this screen is shown.
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp)) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp).padding(bottom = 96.dp)) {
             Text("My Profile", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
 
             LazyColumn(Modifier.weight(1f)) {
