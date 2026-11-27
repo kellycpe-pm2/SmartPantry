@@ -138,6 +138,9 @@ fun CommunityScreen(
     var dialogId by rememberSaveable { mutableLongStateOf(0L) }
     var dialogTitle by rememberSaveable { mutableStateOf("") }
     var exportDetails by remember { mutableStateOf(false) }
+    var exportPrivate by remember { mutableStateOf(false) }
+    var addIngredientOnOpen by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(screen){if(screen!="editor")addIngredientOnOpen=false}
     var caption by rememberSaveable { mutableStateOf("") }
     var editingCaption by rememberSaveable { mutableStateOf(false) }
     var requestId by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
@@ -288,7 +291,10 @@ fun CommunityScreen(
                         IconButton(onClick={exportDetails=true}){Icon(Icons.Default.Share,"Share recipe")}
                         if(p.str("owner")==vm.userId)IconButton(onClick={vm.openDraft(p.long("recipeId")){screen="editor"}},enabled=!busy){Icon(Icons.Default.Edit,"Edit recipe")}
                     }
-                    if(screen=="personal_detail")IconButton(onClick={screen="editor"}){Icon(Icons.Default.Edit,"Edit recipe")}
+                    if(screen=="personal_detail"){
+                        IconButton(onClick={exportPrivate=true}){Icon(Icons.Default.Share,"Share recipe")}
+                        IconButton(onClick={screen="editor"}){Icon(Icons.Default.Edit,"Edit recipe")}
+                    }
                 }
             )
             if (loading && !root) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -315,11 +321,12 @@ fun CommunityScreen(
                     "personal_detail" -> LocalRecipeDetails(
                         recipe=Recipe(recipeId=draft.recipeId,recipeName=draft.title,recipeCategory=draft.category,isVegan=draft.vegan,
                           description=draft.description,cookingSteps=draft.steps,recipeImage=draft.image,userId=vm.userId),
-                        matchInfo=null,busy=busy,modifier=Modifier.fillMaxSize(),ingredients=draft.ingredients,onEdit={screen="editor"},
+                        matchInfo=null,busy=busy,modifier=Modifier.fillMaxSize(),ingredients=draft.ingredients,onEdit={screen="editor"},onAddIngredient={addIngredientOnOpen=true;screen="editor"},
                         onPublish={publish(draft.recipeId,draft.title)},onShoppingList=onShoppingList
                     )
                     "editor" -> RecipeEditor(
                         vm = vm,
+                        initialAddIngredient=addIngredientOnOpen,
                         modifier = Modifier.fillMaxSize(),
                         onSaved = { _ ->
                             recipeVm.refreshRecipes(); activeFilter="personal";search="";screen="home";vm.feed()
@@ -557,7 +564,7 @@ fun CommunityScreen(
         }
     }
 
-    if (error != null) AlertDialog(
+    if (error != null && screen!="editor") AlertDialog(
         onDismissRequest = vm::clearError,
         icon = { Icon(Icons.Default.Info, null) },
         title = { Text("Unable to finish") },
@@ -582,6 +589,11 @@ fun CommunityScreen(
         )
     }
 
+    if(exportPrivate)CommunityExportMenu(buildJsonObject{
+        put("post",buildJsonObject{put("id",0);put("recipeId",draft.recipeId);put("title",draft.title);put("category",draft.category);put("description",draft.description);put("image",draft.image);put("author","You");put("published",false)})
+        put("steps",JsonArray(draft.steps.map{JsonPrimitive(it)}))
+        put("ingredients",JsonArray(draft.ingredients.map{row->buildJsonObject{put("id",row.id);put("name",row.name);put("quantity",row.quantity.toDoubleOrNull()?:0.0);put("unit",row.unit);put("image",row.image)}}))
+    }){exportPrivate=false}
     if(exportDetails && detail!=null)CommunityExportMenu(detail!!){exportDetails=false}
     when (dialog) {
         "resume" -> AlertDialog(
@@ -686,7 +698,7 @@ fun CommunityScreen(
 @Composable
 private fun LocalRecipeDetails(
  recipe:Recipe,matchInfo:RecommendedRecipeResult?,busy:Boolean,modifier:Modifier=Modifier,
- ingredients:List<DraftIngredient> = emptyList(),onEdit:()->Unit,onPublish:()->Unit,onShoppingList:()->Unit
+ ingredients:List<DraftIngredient> = emptyList(),onEdit:()->Unit,onPublish:()->Unit,onShoppingList:()->Unit,onAddIngredient:()->Unit=onEdit
 ) {
  val c=MaterialTheme.colorScheme;var allSteps by rememberSaveable{mutableStateOf(false)}
  Column(modifier.verticalScroll(rememberScrollState()).padding(bottom=24.dp)){
@@ -700,6 +712,7 @@ private fun LocalRecipeDetails(
     RecipePhoto(row.image.ifBlank{row.name.lowercase()},Modifier.size(34.dp).clip(CircleShape),false)
     Text(row.name,Modifier.weight(1f));Text("${row.quantity} ${row.unit}",style=MaterialTheme.typography.bodySmall)
    }}
+   OutlinedButton(onClick=onAddIngredient,enabled=!busy,modifier=Modifier.fillMaxWidth()){Icon(Icons.Default.Add,null);Spacer(Modifier.width(6.dp));Text("Add ingredient to recipe")}
    Text("Cooking steps",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
    (if(allSteps)recipe.cookingSteps else recipe.cookingSteps.take(3)).forEachIndexed{index,step->Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){
     Surface(shape=CircleShape,color=c.primaryContainer){Text("${index+1}",Modifier.padding(8.dp),color=c.primary)}
@@ -978,15 +991,22 @@ private fun RecipeDetails(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, onSaved: (Long) -> Unit) {
+private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, initialAddIngredient:Boolean=false,onSaved: (Long) -> Unit) {
     val draft by vm.draft.collectAsState()
     val busy by vm.busy.collectAsState()
     val catalog by vm.catalog.collectAsState()
     var helperVisible by rememberSaveable { mutableStateOf(false) }
     var helperName by rememberSaveable { mutableStateOf("") }
+    var helperMode by rememberSaveable{mutableStateOf("AI")}
+    var helperServings by rememberSaveable{mutableStateOf("2")}
+    var helperDietary by rememberSaveable{mutableStateOf("Unspecified")}
+    val preparing by vm.preparing.collectAsState()
+    val draftError by vm.error.collectAsState()
+    var resolvingIngredient by rememberSaveable{mutableIntStateOf(-1)}
+    var removeUnresolved by remember{mutableIntStateOf(-1)}
     var confirmReplace by rememberSaveable { mutableStateOf(false) }
-    val prepare: () -> Unit = { vm.prepareByName(helperName) { helperVisible = false; confirmReplace = false } }
-    var pickingIngredient by rememberSaveable { mutableStateOf(false) }
+    val prepare: () -> Unit = { confirmReplace=false;vm.prepareByName(helperName,helperMode,helperServings.toIntOrNull()?:0,helperDietary) { helperVisible = false } }
+    var pickingIngredient by rememberSaveable { mutableStateOf(initialAddIngredient) }
     var ingredientQuery by rememberSaveable { mutableStateOf("") }
     var selectedIngredient by rememberSaveable { mutableLongStateOf(0L) }
     var ingredientName by rememberSaveable { mutableStateOf("") }
@@ -1016,16 +1036,17 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, onSaved: (L
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        if (draft.recipeId == 0L) {
+        if (draftError!=null && !helperVisible)Text(draftError!!,color=c.error,style=MaterialTheme.typography.bodyMedium)
+        if (true) {
             FilledTonalButton(
                 onClick = { helperVisible = true },
-                enabled = !busy && catalog.isNotEmpty(),
+                enabled = !busy,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp)
             ) {
                 Icon(Icons.Default.AutoAwesome, null, Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Prepare a recipe draft")
+                Text("Generate recipe draft")
             }
         }
         if (draft.source.isNotBlank()) Surface(shape = RoundedCornerShape(12.dp), color = c.primaryContainer) {
@@ -1086,6 +1107,19 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, onSaved: (L
             Text("Ingredients", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text("${draft.ingredients.size}/50", style = MaterialTheme.typography.labelMedium, color = c.onSurfaceVariant)
         }
+        if(draft.unresolved.isNotEmpty())Surface(shape=RoundedCornerShape(14.dp),color=c.errorContainer){
+            Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+                Text("${draft.unresolved.size} ingredient(s) need a match",fontWeight=FontWeight.Bold,color=c.onErrorContainer)
+                Text("Choose the correct catalogue ingredient for each row before saving. No new pantry ingredient is created automatically.",style=MaterialTheme.typography.bodySmall,color=c.onErrorContainer)
+                draft.unresolved.forEachIndexed{index,row->
+                    Row(verticalAlignment=Alignment.CenterVertically){
+                        Column(Modifier.weight(1f)){Text(row.name,fontWeight=FontWeight.Medium);Text("${row.quantity} ${row.unit}",style=MaterialTheme.typography.labelMedium)}
+                        TextButton(onClick={resolvingIngredient=index;editingIngredient=-1;ingredientQuery=row.name;selectedIngredient=0;ingredientName="";ingredientQuantity=row.quantity;ingredientUnit=row.unit;ingredientImage="";fieldError="";pickingIngredient=true}){Text("Match")}
+                        IconButton(onClick={removeUnresolved=index}){Icon(Icons.Default.DeleteOutline,"Remove unresolved ingredient")}
+                    }
+                }
+            }
+        }
         draft.ingredients.forEachIndexed { index, row ->
             Surface(shape = RoundedCornerShape(12.dp), color = c.surfaceVariant, border = BorderStroke(1.dp, c.outlineVariant)) {
                 Row(
@@ -1095,6 +1129,7 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, onSaved: (L
                     Text(row.name, Modifier.weight(1f), fontWeight = FontWeight.Medium, maxLines = 2)
                     Text("${row.quantity} ${row.unit}", style = MaterialTheme.typography.bodySmall)
                     IconButton(onClick = {
+                        resolvingIngredient=-1
                         editingIngredient = index
                         selectedIngredient = row.id
                         ingredientName = row.name
@@ -1112,6 +1147,7 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, onSaved: (L
         }
         OutlinedButton(
             onClick = {
+                resolvingIngredient=-1
                 editingIngredient = -1
                 selectedIngredient = 0
                 ingredientQuery = ""
@@ -1174,61 +1210,25 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, onSaved: (L
     }
     if(confirmHide)AlertDialog(onDismissRequest={confirmHide=false},title={Text("Hide recipe from community?")},text={Text("It will remain in My recipes. Existing comments, ratings and favourites are kept.")},confirmButton={TextButton(onClick={confirmHide=false;vm.saveDraft(onSaved)}){Text("Hide recipe")}},dismissButton={TextButton(onClick={confirmHide=false}){Text("Cancel")}})
     if(confirmDelete)AlertDialog(onDismissRequest={confirmDelete=false},title={Text("Delete recipe permanently?")},text={Text("This also deletes its community post, comments, ratings and favourites. This cannot be undone.")},confirmButton={TextButton(onClick={confirmDelete=false;vm.deletePersonal(draft.recipeId){onSaved(0)}}){Text("Delete",color=c.error)}},dismissButton={TextButton(onClick={confirmDelete=false}){Text("Cancel")}})
-    if (helperVisible) ModalBottomSheet(onDismissRequest = { if (!busy) helperVisible = false }) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .imePadding()
-                .verticalScroll(rememberScrollState())
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text("Recipe draft helper", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(
-                "Enter a dish name for an AI draft, or choose a built-in template. Review all details before saving.",
-                style = MaterialTheme.typography.bodyMedium
-            )
-            OutlinedTextField(
-                value = helperName,
-                onValueChange = { helperName = it.take(150) },
-                label = { Text("What would you like to cook?") },
-                placeholder = { Text("e.g. Ayam Kicap or 番茄炒蛋") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
-            )
-            Text("Built-in recipes", fontWeight = FontWeight.SemiBold)
-            RecipeDraftHelper.templates.chunked(2).forEach { pair ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    pair.forEach { template ->
-                        FilterChip(
-                            selected = RecipeDraftHelper.key(helperName) == RecipeDraftHelper.key(template.title),
-                            onClick = { helperName = template.title },
-                            label = { Text(template.title) },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
+    if(removeUnresolved>=0)AlertDialog(onDismissRequest={removeUnresolved=-1},title={Text("Remove this ingredient?")},text={Text("The cooking steps may still refer to it. Review and adjust the recipe before saving.")},confirmButton={TextButton(onClick={val index=removeUnresolved;removeUnresolved=-1;vm.editDraft(draft.copy(unresolved=draft.unresolved.filterIndexed{i,_->i!=index}))}){Text("Remove")}},dismissButton={TextButton(onClick={removeUnresolved=-1}){Text("Cancel")}})
+    if(helperVisible)ModalBottomSheet(onDismissRequest={vm.cancelPrepare();helperVisible=false;confirmReplace=false},sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true)){
+        Column(Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+            Text("Recipe draft",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
+            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                FilterChip(selected=helperMode=="AI",onClick={helperMode="AI";vm.clearError()},enabled=!busy,label={Text("AI draft")},leadingIcon={Icon(Icons.Default.AutoAwesome,null,Modifier.size(18.dp))})
+                FilterChip(selected=helperMode=="Template",onClick={helperMode="Template";helperName="";vm.clearError()},enabled=!busy,label={Text("Templates")})
             }
-            Text(
-                "Uses community recipes or curated templates first; Groq can prepare other dishes when connected. AI may make mistakes. Nothing is saved or published automatically.",
-                style = MaterialTheme.typography.bodySmall,
-                color = c.onSurfaceVariant
-            )
-            Button(
-                onClick = {
-                    if (draft.title.isNotBlank() || draft.ingredients.isNotEmpty() || draft.steps.any { it.isNotBlank() }) {
-                        confirmReplace = true
-                    } else {
-                        prepare()
-                    }
-                },
-                enabled = helperName.trim().isNotEmpty() && !busy,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 50.dp),
-                shape = RoundedCornerShape(12.dp)
-            ) { Text("Prepare editable draft") }
+            Text(if(helperMode=="AI")"Generate an editable recipe using Groq. Nothing is saved or published automatically." else "Choose a built-in template. This option does not call AI.",style=MaterialTheme.typography.bodySmall,color=c.onSurfaceVariant)
+            if(helperMode=="AI")OutlinedTextField(helperName,{helperName=it.replace("\n"," ").replace("\r"," ").take(150)},Modifier.fillMaxWidth(),label={Text("Dish name")},placeholder={Text("e.g. Mushroom Omelette")},singleLine=true,enabled=!busy)
+            else RecipeDraftHelper.templates.chunked(2).forEach{pair->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){pair.forEach{template->FilterChip(selected=helperName==template.title,onClick={helperName=template.title},enabled=!busy,label={Text(template.title)},modifier=Modifier.weight(1f))}}}
+            OutlinedTextField(helperServings,{helperServings=it.filter{ch->ch.isDigit()}.take(2)},Modifier.fillMaxWidth(),label={Text("Servings (1–12)")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),enabled=!busy)
+            if(helperMode=="AI")UnitDropdown("Dietary preference",helperDietary,listOf("Unspecified","Halal","Vegetarian","Vegan")){if(!busy)helperDietary=it}
+            draftError?.let{Surface(shape=RoundedCornerShape(12.dp),color=c.errorContainer){Text(it,Modifier.padding(12.dp),color=c.onErrorContainer,style=MaterialTheme.typography.bodyMedium)}}
+            if(preparing){LinearProgressIndicator(Modifier.fillMaxWidth());Text(if(helperMode=="AI")"Generating your draft…" else "Preparing template…",style=MaterialTheme.typography.bodySmall);OutlinedButton(onClick={vm.cancelPrepare()},modifier=Modifier.fillMaxWidth()){Text("Cancel")}}
+            else Button(onClick={if(draft.title.isNotBlank()||draft.ingredients.isNotEmpty()||draft.unresolved.isNotEmpty()||draft.steps.any{it.isNotBlank()})confirmReplace=true else prepare()},enabled=helperName.isNotBlank()&&helperServings.toIntOrNull() in 1..12&&!busy,modifier=Modifier.fillMaxWidth().heightIn(min=50.dp)){
+                Icon(if(helperMode=="AI")Icons.Default.AutoAwesome else Icons.Default.RestaurantMenu,null);Spacer(Modifier.width(8.dp));Text(if(helperMode=="AI")"Generate AI draft" else "Use template")
+            }
+            Text("Review ingredients, quantities and cooking instructions before saving.",style=MaterialTheme.typography.bodySmall,color=c.onSurfaceVariant)
         }
     }
     if (confirmReplace) AlertDialog(
@@ -1358,10 +1358,12 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, onSaved: (L
                         vm.editDraft(
                             draft.copy(
                                 ingredients = if (editingIngredient < 0) draft.ingredients + row
-                                else draft.ingredients.mapIndexed { i, old -> if (i == editingIngredient) row else old }
+                                else draft.ingredients.mapIndexed { i, old -> if (i == editingIngredient) row else old },
+                                unresolved=if(resolvingIngredient>=0)draft.unresolved.filterIndexed{i,_->i!=resolvingIngredient}else draft.unresolved
                             )
                         )
                         pickingIngredient = false
+                        resolvingIngredient=-1
                     }
                 },
                 modifier = Modifier

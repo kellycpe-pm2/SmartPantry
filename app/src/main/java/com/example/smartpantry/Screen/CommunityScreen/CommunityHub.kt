@@ -40,6 +40,7 @@ internal fun CommunityHub(vm:CommunityViewModel,mode:String,search:String,onSear
  val loading by vm.loading.collectAsState();val recLoading by vm.recommendationLoading.collectAsState();val failed by vm.feedFailed.collectAsState()
  val recFailed by vm.recommendationFailed.collectAsState();val pantryEmpty by vm.pantryEmpty.collectAsState();val busy by vm.busy.collectAsState()
  val more by vm.more.collectAsState();val recMore by vm.recommendationMore.collectAsState()
+ var publication by rememberSaveable {mutableStateOf("All")}
  var filterOpen by remember { mutableStateOf(false) }
  var showTools by remember { mutableStateOf(true) }
  LaunchedEffect(listState) {
@@ -66,6 +67,9 @@ internal fun CommunityHub(vm:CommunityViewModel,mode:String,search:String,onSear
       }
       IconButton(onClick={filterOpen=true}){Icon(Icons.Default.Tune,"Filter recipes",tint=c.primary)}
      }
+     if(mode=="personal")Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+      listOf("All","Published","Private").forEach{label->FilterChip(selected=publication==label,onClick={publication=label},label={Text(label)})}
+     }
      if(mode=="post" && filters.isNotEmpty())Text("Filters: "+filters.entries.joinToString(" · "){it.value.jsonPrimitive.content},style=MaterialTheme.typography.labelSmall,color=c.primary)
     }
    }
@@ -85,10 +89,10 @@ internal fun CommunityHub(vm:CommunityViewModel,mode:String,search:String,onSear
      }
      if(recs.isNotEmpty()) {
       if(mode=="post")item {
-       Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-        pantryCarousel(recs).forEach { row->Surface(Modifier.width(220.dp).height(260.dp).clickable { open(row) },shape=RoundedCornerShape(16.dp),border=BorderStroke(1.dp,c.outlineVariant),color=c.surface) {
+       Row(Modifier.horizontalScroll(rememberScrollState()).height(IntrinsicSize.Min),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+        pantryCarousel(recs).forEach { row->Surface(Modifier.width(220.dp).fillMaxHeight().clickable { open(row) },shape=RoundedCornerShape(16.dp),border=BorderStroke(1.dp,c.outlineVariant),color=c.surface) {
          Column { RecipePhoto(row.str("image"),Modifier.fillMaxWidth().height(100.dp));Column(Modifier.padding(10.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
-          Text(row.str("title"),fontWeight=FontWeight.Bold,maxLines=2,minLines=2,overflow=TextOverflow.Ellipsis)
+          Text(row.str("title"),fontWeight=FontWeight.Bold,maxLines=2,overflow=TextOverflow.Ellipsis)
           RecommendationLabel(row)
           Text(if(row.long("missing")==0L)"Ready with your pantry stock" else "Missing ${row.long("missing")} ingredient${if(row.long("missing")==1L)"" else "s"}",style=MaterialTheme.typography.labelSmall,color=c.onSurfaceVariant)
          } }
@@ -113,7 +117,7 @@ internal fun CommunityHub(vm:CommunityViewModel,mode:String,search:String,onSear
      if(more)item { OutlinedButton(onClick={vm.feed(if(mode=="saved")"saved" else "feed",search,category,true,filters=filters)},enabled=!loading,modifier=Modifier.fillMaxWidth()){Text("Load more recipes")} }
     }
     if(mode=="personal") {
-     val rows=mine.filter { search.isBlank() || it.str("title").contains(search,true) || it.words("ingredientNames").any{name->name.contains(search,true)} }
+     val rows=mine.filter{publication=="All" || (publication=="Published" && it.flag("published")) || (publication=="Private" && !it.flag("published"))}.filter { search.isBlank() || it.str("title").contains(search,true) || it.words("ingredientNames").any{name->name.contains(search,true)} }
      if(rows.isEmpty() && !loading)item { HubNotice("No personal recipes match. Tap + to create a recipe, then publish it when you are ready.") }
      items(rows,key={"mine_${it.long("id")}"}) { row->
       val card=buildJsonObject { row.forEach{(k,v)->put(k,v)};put("id",row.long("postId"));put("recipeId",row.long("id"));put("author","You");put("owner",vm.userId);put("showFavourite",false) }

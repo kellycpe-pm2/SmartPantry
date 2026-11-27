@@ -73,14 +73,14 @@ internal fun CommunityExportMenu(data:JsonObject,onDismiss:()->Unit) {
                 try{java.io.ByteArrayOutputStream().use{out->bitmap.compress(Bitmap.CompressFormat.PNG,100,out);out.toByteArray()}}finally{bitmap.recycle()}
             }
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-                ExportTile("Share recipe",Icons.Default.Share,!busy,Modifier.weight(1f)){work{context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply{type="text/plain";putExtra(Intent.EXTRA_TEXT,plain+"\nOpen in SmartPantry: "+link)},"Share recipe"))}}
+                ExportTile("Share recipe",Icons.Default.Share,!busy,Modifier.weight(1f)){work{context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply{type="text/plain";putExtra(Intent.EXTRA_TEXT,plain+(if(post.long("id")>0)"\nOpen in SmartPantry: "+link else ""))},"Share recipe"))}}
                 ExportTile("Save image",Icons.Default.Download,!busy,Modifier.weight(1f)){work{pending=imageBytes();saveImage.launch("$fileName.png")}}
             }
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
                 ExportTile("Share image",Icons.Default.Image,!busy,Modifier.weight(1f)){work{val file=File(context.cacheDir,"recipe_${UUID.randomUUID()}.png");withContext(Dispatchers.IO){file.writeBytes(imageBytes())};shareFile(file,"image/png")}}
-                ExportTile("Copy app link",Icons.Default.Link,!busy,Modifier.weight(1f)){(context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("SmartPantry recipe",link))}
+                if(post.long("id")>0)ExportTile("Copy app link",Icons.Default.Link,!busy,Modifier.weight(1f)){(context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("SmartPantry recipe",link))}
             }
-            Text("App links open this recipe on devices with SmartPantry installed. Share an image or recipe text for other recipients.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(if(post.long("id")>0)"App links open this recipe on devices with SmartPantry installed. Share an image or recipe text for other recipients." else "This recipe is private. You can share its text, image or file without publishing it.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             HorizontalDivider()
             Text("More formats",style=MaterialTheme.typography.titleMedium)
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)) {

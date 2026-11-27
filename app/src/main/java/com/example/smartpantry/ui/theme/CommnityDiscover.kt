@@ -51,11 +51,7 @@ internal fun CommunityDiscover(onOpenPost: (Long) -> Unit, onBrowse: () -> Unit)
     }
     val c = MaterialTheme.colorScheme
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Discover community recipes", Modifier.weight(1f),
-                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            TextButton(onClick = onBrowse) { Text("See all") }
-        }
+        HomeSectionTitle("Discover community recipes",onBrowse)
         when {
             loading -> { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Loading community recipes…", style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant) }
             failed -> Surface(shape = RoundedCornerShape(16.dp), color = c.surfaceVariant) {
@@ -71,19 +67,17 @@ internal fun CommunityDiscover(onOpenPost: (Long) -> Unit, onBrowse: () -> Unit)
                     Text("Published recipes will appear here.", style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant)
                 }
             }
-            else -> Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-                posts.forEach {post->Surface(Modifier.width(220.dp).clickable{onOpenPost(post.long("id"))},shape=RoundedCornerShape(16.dp),border=BorderStroke(1.dp,c.outlineVariant),color=c.surface){
-                    Column {
-                        RecipePhoto(post.str("image"),Modifier.fillMaxWidth().height(110.dp))
-                        Column(Modifier.padding(10.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
-                            Text(post.str("title"),fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis)
-                            Row(verticalAlignment=Alignment.CenterVertically){
-                                Text(String.format(java.util.Locale.US,"★ %.1f (%d)",post.number("rating"),post.long("ratingCount")),Modifier.weight(1f),style=MaterialTheme.typography.labelMedium,color=c.primary)
-                                Icon(Icons.Default.ChevronRight,"View recipe",Modifier.size(24.dp),tint=c.primary)
-                            }
-                        }
+            else -> posts.forEachIndexed {index,post->
+                Row(Modifier.fillMaxWidth().clickable{onOpenPost(post.long("id"))}.padding(vertical=6.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)){
+                    RecipePhoto(post.str("image"),Modifier.width(104.dp).height(70.dp).clip(RoundedCornerShape(12.dp)))
+                    Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){
+                        Text(post.str("title"),fontWeight=FontWeight.Bold,maxLines=2,overflow=TextOverflow.Ellipsis)
+                        Text("by ${post.str("author")}",style=MaterialTheme.typography.bodySmall,color=c.onSurfaceVariant)
+                        Text(String.format(java.util.Locale.US,"★ %.1f (%d)",post.number("rating"),post.long("ratingCount")),style=MaterialTheme.typography.labelMedium,color=c.primary)
                     }
-                }}
+                    Icon(Icons.Default.ChevronRight,"View recipe",Modifier.size(24.dp),tint=c.primary)
+                }
+                if(index<posts.lastIndex)HorizontalDivider(color=c.outlineVariant)
             }
         }
     }

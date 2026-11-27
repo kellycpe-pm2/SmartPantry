@@ -195,56 +195,37 @@ internal class CommunityViewModel(application: Application, private val saved: S
         if(action=="favourite") _posts.value=_posts.value.map { row -> if(row.long("id")==postId) buildJsonObject { row.forEach { (k,v)->put(k,v) }; put("favourite",extra.flag("enabled")) } else row }
         done()
     }
-    fun prepareByName(name: String, done: () -> Unit) = mutate {
-        val query = name.trim()
-        require(query.length in 1..150) { "Enter a dish name with 1–150 characters." }
-        if (_catalog.value.isEmpty()) {
-            try { refreshCatalog() } catch(e: Exception) {
-                if(!com.example.smartpantry.core.isConnectionFailure(e))throw e
-                _catalog.value=com.example.smartpantry.storage.remote.ShoppingRepository(getApplication()).catalog(true).mapNotNull { row ->
-                    row.ingredientId?.let { id -> buildJsonObject { put("id",id);put("name",row.ingredientName);put("unit",row.unit.orEmpty());put("image",row.image.orEmpty()) } }
+    private val _preparing=MutableStateFlow(false);val preparing=_preparing.asStateFlow()
+    private var prepareJob:Job?=null
+    fun cancelPrepare(){prepareJob?.cancel()}
+    fun prepareByName(name:String,mode:String="AI",servings:Int=2,dietary:String="Unspecified",done:()->Unit){
+        if(_busy.value)return
+        _busy.value=true;_preparing.value=true;_error.value=null
+        prepareJob=viewModelScope.launch{
+            try{
+                val owner=userId;val original=_draft.value
+                val query=name.trim()
+                require(query.length in 1..150 && !query.contains('\n') && !query.contains('\r')){"Enter a dish name with 1–150 characters on one line."}
+                require(servings in 1..12){"Choose 1–12 servings."}
+                try{refreshCatalog()}catch(t:Exception){
+                    if(t is CancellationException)throw t
+                    if(!com.example.smartpantry.core.isConnectionFailure(t))throw t
+                    if(mode=="AI")throw IllegalStateException("Cannot load the ingredient catalogue. Check your connection; your current form is unchanged.")
+                    if(_catalog.value.isEmpty())_catalog.value=com.example.smartpantry.storage.remote.ShoppingRepository(getApplication()).catalog(true).mapNotNull{row->row.ingredientId?.let{id->buildJsonObject{put("id",id);put("name",row.ingredientName);put("unit",row.unit.orEmpty());put("image",row.image.orEmpty())}}}
                 }
-                require(_catalog.value.isNotEmpty()) { "No saved ingredient catalogue is available yet. Connect once to load it, or create your recipe manually." }
-            }
+                require(_catalog.value.isNotEmpty()){"No saved ingredient catalogue is available. Connect once to load it."}
+                val generated=if(mode=="AI")GroqDraftRepository().create(query,_catalog.value,servings,dietary) else {
+                    val template=RecipeDraftHelper.create(query,_catalog.value)
+                    template.copy(ingredients=template.ingredients.map{row->val q=row.quantity.toDouble()*servings/2.0;row.copy(quantity=quantityText(if(row.unit in listOf("pcs","bag","carton","bunch"))kotlin.math.ceil(q)else q))},
+                        source="Built-in recipe template · $servings servings · Review quantities before saving")
+                }
+                check(userId==owner){"Please reopen this page after switching accounts."}
+                // Replacing the form is explicit, while editing a saved recipe keeps its identity and visibility.
+                editDraft(generated.copy(recipeId=original.recipeId,publish=original.publish,wasPublished=original.wasPublished))
+                _notice.value=if(mode=="AI")"AI draft ready. Review all details before saving." else "Template ready. No AI request was made."
+                done()
+            }catch(cancelled:CancellationException){throw cancelled}catch(t:Throwable){failure(t)}finally{_busy.value=false;_preparing.value=false}
         }
-        // Prefer a real, published recipe with the same title. Network failure may
-        // fall back to an explicitly labelled local template, never a fake AI result.
-        val published = try { repo.call("feed", buildJsonObject { put("search",query) }).rows("posts") } catch (cancelled: CancellationException) { throw cancelled } catch (unavailable: Exception) { emptyList() }
-        val match = published.firstOrNull { RecipeDraftHelper.key(it.str("title")) == RecipeDraftHelper.key(query) }
-        if (match != null) {
-            val data = repo.call("detail",buildJsonObject {put("postId",match.long("id"))})
-            require(data.rows("ingredients").all { ingredient -> _catalog.value.any { it.long("id")==ingredient.long("id") } }) { "This recipe uses ingredients not available in your catalogue. Choose a built-in template or create it manually." }
-            editDraft(
-                RecipeDraft(
-                    title = match.str("title"), category = match.str("category", "Other"),
-                    description = ("Adapted from ${match.str("author")}'s community recipe.\n" + match.str(
-                        "description"
-                    )).take(5000),
-                    source = "Community recipe by ${match.str("author")} · Review your copy before saving.",
-                    ingredients = data.rows("ingredients").map { row ->
-                        DraftIngredient(
-                            row.long("id"),
-                            row.str("name"),
-                            quantityText(row.number("quantity")),
-                            normalizedUnit(row.str("unit")),
-                            row.str("image")
-                        )
-                    },
-                    steps = data.words("steps")
-                )
-            )
-        } else if (RecipeDraftHelper.find(query)==null) {
-            editDraft(GroqDraftRepository().create(query,_catalog.value))
-        } else {
-            val prepared = RecipeDraftHelper.create(query,_catalog.value)
-            val withPhoto = if (prepared.title == "Nasi Goreng") {
-                val uri=Uri.parse("android.resource://${getApplication<Application>().packageName}/${com.example.smartpantry.R.drawable.home_nasi_goreng}")
-                prepared.copy(image=repo.importImage(getApplication(),uri))
-            } else prepared
-            editDraft(withPhoto)
-        }
-        _notice.value="Draft prepared. Check ingredients, portions and steps before saving."
-        done()
     }
     private fun JsonObject.long(key: String): Long {
         return this[key]?.jsonPrimitive?.long ?: 0L

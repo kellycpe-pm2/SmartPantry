@@ -23,19 +23,24 @@ internal fun normalizedUnit(unit: String): String = when(unit.trim().lowercase()
 @Serializable
 internal data class DraftIngredient(val id: Long, val name: String, val quantity: String = "1", val unit: String = "pcs", val image: String = "")
 @Serializable
+internal data class UnresolvedIngredient(val name:String,val quantity:String="1",val unit:String="pcs")
+@Serializable
 internal data class RecipeDraft(
     val recipeId: Long = 0, val title: String = "", val category: String = "Malaysian",
     val description: String = "", val image: String = "", val vegan: Boolean = false, val source: String = "",
     val ingredients: List<DraftIngredient> = emptyList(), val steps: List<String> = listOf(""),
+    val unresolved: List<UnresolvedIngredient> = emptyList(),
     val requestId: String = UUID.randomUUID().toString(),
     val publish: Boolean = false, val wasPublished: Boolean = false,
     val cuisine: String = category.takeIf { it in listOf("Malaysian","Chinese","Asian","Western","Other") }.orEmpty(), val dishType: String = "", val dietary: String = "Unspecified"
 ) {
-    fun problem(): String? {
+    fun problem(allowUnresolved:Boolean=false): String? {
+        if(unresolved.isNotEmpty() && !allowUnresolved)return "Match the ${unresolved.size} unresolved ingredient(s) before saving."
+
         if (title.trim().length !in 1..150) return "Enter a title with 1–150 characters."
         if (description.trim().length > 5000) return "Description must be 5000 characters or fewer."
         if (category.trim().length !in 1..500) return "Choose a category."
-        if (ingredients.size !in 1..50) return "Add 1–50 ingredients."
+        if (ingredients.size+unresolved.size !in 1..50) return "Add 1–50 ingredients."
         if (ingredients.map { it.id }.distinct().size != ingredients.size) return "Combine repeated ingredients."
         ingredients.forEach { row ->
             val q = row.quantity.toDoubleOrNull()

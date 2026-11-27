@@ -1,0 +1,4 @@
+# New Recipe AI verifies the actual signed-in user inside the handler.
+# Teammate ingredient-assistant configuration is intentionally not changed.
+[functions.recipe-draft]
+verify_jwt = false

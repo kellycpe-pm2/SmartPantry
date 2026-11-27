@@ -235,6 +235,7 @@ fun AppNavHost(
                         onCreateIngredient = {navController.navigate("add")},
                         onAddPantry = {navController.navigate("add_ingredient")},
                         onCreateRecipe = {navController.navigate("community_create")},
+                        onProfile = {navController.navigate("profile")},
                         userName = profile?.displayName.orEmpty()
                     )
                 }
