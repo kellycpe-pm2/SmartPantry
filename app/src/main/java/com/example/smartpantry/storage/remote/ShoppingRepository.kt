@@ -26,7 +26,7 @@ import java.util.UUID
 internal data class RemoteShoppingItem(
     val id: Long,
     @SerialName("ingredient_id") val ingredientId: Long? = null,
-    @SerialName("custom_ingredient_id") val customIngredientId: Long? = null,
+    @SerialName("legacy_custom_id") val legacyCustomIngredientId: Long? = null,
     @SerialName("planned_quantity") val plannedQuantity: Double,
     @SerialName("purchase_quantity") val purchaseQuantity: Double,
     val unit: String,
@@ -36,8 +36,6 @@ internal data class RemoteShoppingItem(
     @SerialName("review_handled") val reviewHandled: Boolean = false,
     @SerialName("ingredient_name") val displayName: String? = null
 )
-@Serializable
-internal data class RemoteCustomIngredient(val id:Long,val name:String,@SerialName("image_path")val imagePath:String?=null)
 
 @Serializable
 internal data class ShoppingPending(val action: String, val item: RemoteShoppingItem, val name: String, val requestId: String)
@@ -72,11 +70,32 @@ internal class ShoppingRepository(
     } catch(_: SecurityException) { true }
     private fun checkOwner() { check(userId() == owner) { "Please reopen the shopping list after switching accounts." } }
     private inline fun <reified T> cached(key: String, fallback: T): T =
-        prefs.getString(key, null)?.let { codec.decodeFromString<T>(it) } ?: fallback
+        prefs.getString(key, null)?.let { codec.decodeFromJsonElement<T>(upgradeShoppingCache(Json.parseToJsonElement(it), legacyMappings(), legacyNames())) } ?: fallback
     private inline fun <reified T> store(key: String, value: T) {
         val editor=prefs.edit().putString(key, codec.encodeToString(value))
         if(key=="pantry") editor.putLong("updated_pantry",System.currentTimeMillis())
         check(editor.commit()) { "Could not save on this device. Free up storage and retry." }
+    }
+    private fun legacyMappings(): Map<Long,Long> = runCatching {
+        Json.parseToJsonElement(prefs.getString("ingredient_legacy_map","{}")!!).jsonObject.mapNotNull { (k,v) ->
+            val old=k.toLongOrNull();val target=v.jsonPrimitive.longOrNull
+            if(old!=null && target!=null)old to target else null
+        }.toMap()
+    }.getOrDefault(emptyMap())
+    private fun legacyNames(): Map<Long,JsonObject> = runCatching {
+        Json.parseToJsonElement(prefs.getString("custom","[]")!!).jsonArray.map { it.jsonObject }.associateBy { it["id"]!!.jsonPrimitive.long }
+    }.getOrDefault(emptyMap())
+    private suspend fun upgradeLegacyCache() {
+        val result=rpc("legacy_map")["map"] as? JsonObject ?: error("Ingredient mapping is unavailable. Retry after the database migration.")
+        checkOwner()
+        val mapping=result.map { (k,v)->k.toLong() to v.jsonPrimitive.long }.toMap()
+        val editor=prefs.edit().putString("ingredient_legacy_map",result.toString())
+        for(key in listOf("items","pending","local_catalog")) {
+            val raw=prefs.getString(key,null) ?: continue
+            if(!prefs.contains("before_ingredient_unification_$key"))editor.putString("before_ingredient_unification_$key",raw)
+            editor.putString(key,upgradeShoppingCache(Json.parseToJsonElement(raw),mapping,legacyNames()).toString())
+        }
+        check(editor.commit()) { "Could not upgrade the shopping cache. Free up storage and retry." }
     }
     private fun pending(): List<ShoppingPending> = cached("pending", emptyList())
     private fun commit(rows: List<RemoteShoppingItem>, queue: List<ShoppingPending>, resolved: Pair<Long,Long>? = null, localCatalog: List<RemoteShoppingItem>? = null) {
@@ -87,6 +106,7 @@ internal class ShoppingRepository(
             prefs.getString("review_${it.first}",null)?.let { decision -> editor.putString("review_${it.second}",decision).remove("review_${it.first}") }
         }
         check(editor.commit()) { "Could not save on this device. Free up storage and retry." }
+        if (queue.isEmpty()) updateSyncNotification(false)
     }
     private suspend inline fun <reified T> read(key: String, fallback: T, cacheOnly: Boolean, crossinline fetch: suspend () -> T): T = withContext(Dispatchers.IO) {
         checkOwner()
@@ -101,7 +121,7 @@ internal class ShoppingRepository(
     private fun userId() = account()
     private suspend fun rpc(action:String,payload:JsonObject=buildJsonObject{}):JsonObject = withContext(Dispatchers.IO) {
         checkOwner()
-        Json.parseToJsonElement(supabase.postgrest.rpc(if(action=="transfer")"shopping_v5" else "shopping_api",buildJsonObject{put("p_action",action);put("p_payload",buildJsonObject{payload.forEach{(k,v)->put(k,v)};put("owner_id",owner)})}).data).jsonObject
+        Json.parseToJsonElement(supabase.postgrest.rpc(if(action=="transfer")"shopping_v5" else "shopping_ingredients_v2",buildJsonObject{put("p_action",action);put("p_payload",buildJsonObject{payload.forEach{(k,v)->put(k,v)};put("owner_id",owner)})}).data).jsonObject
     }
     suspend fun items(cacheOnly: Boolean = false): List<RemoteShoppingItem> = withContext(Dispatchers.IO) {
         checkOwner()
@@ -116,9 +136,18 @@ internal class ShoppingRepository(
             } catch(e: Exception) { if(!isConnectionFailure(e))throw e;offline=true;cached("items",emptyList()) }
         }
     }
-    suspend fun localIngredients(): List<RemoteShoppingItem> = withContext(Dispatchers.IO) { checkOwner();cached("local_catalog",emptyList()) }
-    suspend fun catalog(cacheOnly: Boolean = false): List<Ingredient> = read("catalog",emptyList(),cacheOnly) { codec.decodeFromJsonElement(rpc("catalog")["rows"] ?: JsonArray(emptyList())) }
-    suspend fun customIngredients(cacheOnly: Boolean = false): List<RemoteCustomIngredient> = read("custom",emptyList(),cacheOnly) { supabase.from("custom_ingredients").select { filter { eq("user_id",owner) } }.decodeList<RemoteCustomIngredient>() }
+    suspend fun localIngredients(): List<RemoteShoppingItem> = withContext(Dispatchers.IO) {
+        checkOwner()
+        val local=cached<List<RemoteShoppingItem>>("local_catalog",emptyList())
+        val mappings=legacyMappings()
+        val legacy=legacyNames().map{(id,row)->RemoteShoppingItem(0,mappings[id],if(mappings[id]==null)id else null,1.0,1.0,"",photoPath=row["image_path"]?.jsonPrimitive?.contentOrNull,displayName=row["name"]?.jsonPrimitive?.contentOrNull)}
+        (local+legacy).distinctBy{Triple(it.ingredientId,it.legacyCustomIngredientId,it.displayName)}
+    }
+    suspend fun catalog(cacheOnly: Boolean = false): List<Ingredient> = read("catalog",emptyList(),cacheOnly) {
+        val personal=codec.decodeFromJsonElement<List<Ingredient>>(rpc("personal_catalog")["rows"] ?: JsonArray(emptyList()))
+        val shared=codec.decodeFromJsonElement<List<Ingredient>>(rpc("shared_catalog")["rows"] ?: JsonArray(emptyList()))
+        (personal+shared).distinctBy{it.ingredientId}
+    }
     suspend fun pantry(cacheOnly: Boolean = false): List<IngredientUser> = read("pantry",emptyList(),cacheOnly) { supabase.from("Ingredient_User").select { filter { eq("user_id",owner) } }.decodeList<IngredientUser>() }
     suspend fun storedIds(cacheOnly: Boolean = false): Set<Long> = read("stored",emptySet(),cacheOnly) { (rpc("stored")["ids"] as? JsonArray)?.mapNotNull{it.jsonPrimitive.longOrNull}?.toSet() ?: emptySet() }
 
@@ -133,7 +162,7 @@ internal class ShoppingRepository(
             // Persist before trying the network: process death cannot lose an accepted edit.
             val op=ShoppingPending("save",local,name,existing?.requestId ?: requestId)
             val localCatalogue=cached<List<RemoteShoppingItem>>("local_catalog",emptyList())
-            val catalogue=if(item.ingredientId==null && item.customIngredientId==null)
+            val catalogue=if(item.ingredientId==null && item.legacyCustomIngredientId==null)
                 localCatalogue.filterNot{it.displayName?.trim().equals(name.trim(),true)}+local.copy(id=0,isPurchased=false)
             else localCatalogue
             commit(cached<List<RemoteShoppingItem>>("items",emptyList()).filterNot{it.id==localId}+local,
@@ -147,8 +176,14 @@ internal class ShoppingRepository(
     suspend fun syncPending(force: Boolean = false) = withContext(Dispatchers.IO) {
         checkOwner(); mutex.withLock { flushLocked(force=force) }
     }
+    private fun updateSyncNotification(hasPending: Boolean) {
+        runCatching { com.example.smartpantry.notifications.NotificationRepository(app, owner).updateShoppingIssue(hasPending) }
+    }
     private suspend fun flushLocked(onlyId: Long? = null, force: Boolean = false) {
-        if(!force && !connected()) { offline=true;syncStatus="Offline. Your changes are saved on this device.";if(pendingCount>0)com.example.smartpantry.notifications.NotificationRepository(app).recordSyncIssue();return }
+        if(!force && !connected()) { offline=true;syncStatus="Offline. Your changes are saved on this device.";updateSyncNotification(pendingCount > 0);return }
+        try { upgradeLegacyCache() }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) { updateSyncNotification(pendingCount > 0); throw e }
         val attempted=mutableSetOf<Long>()
         val failed=mutableListOf<String>()
         var synced=0
@@ -158,10 +193,11 @@ internal class ShoppingRepository(
             attempted+=op.item.id
             try {
                 var row=op.item
+                require(row.legacyCustomIngredientId==null) { "This saved ingredient has not been mapped yet. Your item is kept on this device; reconnect after the database migration." }
                 val photo=if(op.action=="remove" && row.id>0)null else uploadPhoto(app,row.photoPath)
                 if(row.id<0) {
                     val created=remoteSave(row.copy(id=0,photoPath=photo),op.name,op.requestId)
-                    row=row.copy(id=created.id,ingredientId=created.ingredientId,customIngredientId=created.customIngredientId)
+                    row=row.copy(id=created.id,ingredientId=created.ingredientId,legacyCustomIngredientId=null)
                 }
                 val saved=if(op.action=="save") remoteSave(row.copy(photoPath=photo),op.name,op.requestId) else {
                     supabase.from("shopping_list_items").delete { filter { eq("id",row.id);eq("user_id",owner) } }
@@ -187,7 +223,7 @@ internal class ShoppingRepository(
             pendingCount==0 -> if(synced>0) "$synced change(s) synced successfully." else "Your shopping list is up to date."
             else -> "$synced synced · $pendingCount other change(s) still pending."
         }
-        if(failed.isNotEmpty())com.example.smartpantry.notifications.NotificationRepository(app).recordSyncIssue()
+        updateSyncNotification(pendingCount > 0)
         if(onlyId!=null && failed.isNotEmpty())throw IllegalStateException(syncStatus)
     }
     private suspend fun remoteSave(item: RemoteShoppingItem,name: String,requestId: String): RemoteShoppingItem {
@@ -195,7 +231,6 @@ internal class ShoppingRepository(
         val payload=buildJsonObject {
             put("id",item.id);put("name",name);put("request_id",requestId)
             put("ingredient_id",item.ingredientId?.let(::JsonPrimitive) ?: JsonNull)
-            put("custom_ingredient_id",item.customIngredientId?.let(::JsonPrimitive) ?: JsonNull)
             put("planned_quantity",item.plannedQuantity);put("purchase_quantity",item.purchaseQuantity);put("unit",item.unit);put("is_purchased",item.isPurchased)
             put("unit_price",item.unitPrice?.let(::JsonPrimitive) ?: JsonNull)
             put("photo_path",item.photoPath?.let(::JsonPrimitive) ?: JsonNull);put("review_handled",item.reviewHandled)
@@ -223,8 +258,7 @@ internal class ShoppingRepository(
         }
     }
     suspend fun uploadPhoto(context:Context,path:String?):String? = withContext(Dispatchers.IO) {
-        val inherited=cached<List<Ingredient>>("catalog",emptyList()).mapNotNull{it.image}.toSet() +
-                cached<List<RemoteCustomIngredient>>("custom",emptyList()).mapNotNull{it.imagePath}
+        val inherited=cached<List<Ingredient>>("catalog",emptyList()).mapNotNull{it.image}.toSet()
         val override=com.example.smartpantry.core.shoppingPhotoOverride(path,inherited)
         if(override.isNullOrBlank() || override.startsWith("https://",true) || override.startsWith("http://",true))return@withContext override
         val uploadPath=override

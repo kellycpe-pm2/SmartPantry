@@ -37,6 +37,7 @@ internal fun RecipeAiAssistantDialog(draft:RecipeDraft,catalog:List<JsonObject>,
  var name by rememberSaveable{mutableStateOf(draft.title)}
  var amount by rememberSaveable{mutableStateOf("")}
  var diet by rememberSaveable{mutableStateOf(draft.dietary.ifBlank{"Unspecified"})}
+ var meals by rememberSaveable{mutableStateOf(draft.mealTypes)}
  var question by rememberSaveable{mutableStateOf("")}
  var confirm by remember{mutableStateOf(false)}
  DisposableEffect(Unit){vm.reset();onDispose{vm.reset()}}
@@ -58,6 +59,7 @@ internal fun RecipeAiAssistantDialog(draft:RecipeDraft,catalog:List<JsonObject>,
     if(tab=="fill"){
      OutlinedTextField(name,{name=it.replace('\n',' ').replace('\r',' ').take(150);vm.clearError()},Modifier.fillMaxWidth(),label={Text("Dish name")},placeholder={Text("e.g. Nasi Goreng")},singleLine=true,enabled=!state.loading)
      OutlinedTextField(amount,{amount=it.replace('\n',' ').replace('\r',' ').take(120);vm.clearError()},Modifier.fillMaxWidth(),label={Text("Approximate quantity (optional)")},placeholder={Text("e.g. 500 g cooked rice or 1 plate")},supportingText={Text("Leave blank for AI-suggested quantities. Review them before saving.")},singleLine=true,enabled=!state.loading)
+     MealTypeSelector(meals,{meals=it},enabled=!state.loading,label="Meal type preferences (optional)")
      Text("Dietary preference",style=MaterialTheme.typography.labelLarge)
      Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)){
       listOf("Unspecified" to "No preference","Vegetarian" to "Vegetarian","Vegan" to "Vegan","Halal" to "Halal").forEach{(value,label)->FilterChip(selected=diet==value,onClick={diet=value},enabled=!state.loading,label={Text(label)})}
@@ -71,6 +73,7 @@ internal fun RecipeAiAssistantDialog(draft:RecipeDraft,catalog:List<JsonObject>,
         Text("Generated preview",style=MaterialTheme.typography.labelLarge,fontWeight=FontWeight.Bold,color=c.primary)
         Text(preview.title,style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold)
         Text(preview.description,style=MaterialTheme.typography.bodySmall)
+        MealTypeSummary(preview.mealTypes)
         Text("Ingredients",fontWeight=FontWeight.Bold)
         preview.ingredients.forEach{Text("${it.name} · ${it.quantity} ${it.unit}",style=MaterialTheme.typography.bodySmall)}
         preview.unresolved.forEach{Text("${it.name} · ${it.quantity} ${it.unit} · Needs matching",style=MaterialTheme.typography.bodySmall)}
@@ -102,7 +105,7 @@ internal fun RecipeAiAssistantDialog(draft:RecipeDraft,catalog:List<JsonObject>,
    }
    if(state.loading)OutlinedButton(onClick={vm.cancel()},modifier=Modifier.fillMaxWidth()){Text("Cancel request")}
    else if(tab=="fill")Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)){
-    OutlinedButton(onClick={vm.generate(name,amount,diet,catalog)},modifier=Modifier.weight(1f).heightIn(min=48.dp),shape=RoundedCornerShape(12.dp)){
+    OutlinedButton(onClick={vm.generate(name,amount,diet,catalog,meals)},modifier=Modifier.weight(1f).heightIn(min=48.dp),shape=RoundedCornerShape(12.dp)){
      Icon(Icons.Default.Refresh,null,Modifier.size(18.dp));Spacer(Modifier.width(6.dp));Text(if(state.preview==null)"Generate" else "Regenerate")
     }
     state.preview?.let{preview->Button(onClick={if(draft.title.isNotBlank()||draft.description.isNotBlank()||draft.image.isNotBlank()||draft.ingredients.isNotEmpty()||draft.unresolved.isNotEmpty()||draft.steps.any{it.isNotBlank()})confirm=true else onApply(preview)},modifier=Modifier.weight(1.2f).heightIn(min=48.dp),shape=RoundedCornerShape(12.dp)){Icon(Icons.Default.Check,null,Modifier.size(18.dp));Spacer(Modifier.width(6.dp));Text("Apply to recipe")}}

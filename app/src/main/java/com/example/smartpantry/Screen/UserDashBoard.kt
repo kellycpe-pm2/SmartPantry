@@ -48,14 +48,18 @@ internal fun displayAmount(q:Double,u:String):String {
  onIngredient:(Long)->Unit={},onPantryBatch:(Long,Long)->Unit={id,_->onIngredient(id)},onCreateIngredient:()->Unit={},onAddPantry:()->Unit={},onCreateRecipe:()->Unit={},userName:String="",onProfile:()->Unit={}) {
  val vm:DashboardViewModel=viewModel();val data by vm.data.collectAsState();val loading by vm.loading.collectAsState();val message by vm.message.collectAsState()
  val recommendations by vm.recommendations.collectAsState();val recError by vm.recommendationError.collectAsState()
- val zone=ZoneId.of("Asia/Kuala_Lumpur");val today=LocalDate.now(zone);val c=MaterialTheme.colorScheme
+ val zone=ZoneId.of("Asia/Kuala_Lumpur")
+ var now by remember{mutableStateOf(java.time.LocalDateTime.now(zone))}
+ LaunchedEffect(Unit){while(true){now=java.time.LocalDateTime.now(zone);kotlinx.coroutines.delay(60000)}}
+ val today=now.toLocalDate();val mealSlot=currentMealType(now.hour);val c=MaterialTheme.colorScheme
  val pantry=data.rows("pantry");val soon=pantry.filter{it.str("expiry")>=today.toString()&&it.str("expiry")<=today.plusDays(3).toString()}.sortedBy{it.str("expiry")}.take(3)
  val lifecycle=LocalLifecycleOwner.current.lifecycle
  var rescueIndex by rememberSaveable{mutableIntStateOf(0)}
- val ranked=pantryCarousel(recommendations).sortedWith(compareByDescending<kotlinx.serialization.json.JsonObject>{it.flag("useSoon")}.thenByDescending{it.long("covered").toDouble()/it.long("required").coerceAtLeast(1)})
+ LaunchedEffect(mealSlot,today){rescueIndex=0;vm.refresh()}
+ val ranked=homeRescueCandidates(recommendations,mealSlot)
  val rescue=ranked.getOrNull(if(ranked.isEmpty())0 else rescueIndex.mod(ranked.size))
  fun openRecipe(row:kotlinx.serialization.json.JsonObject){onOpenCommunityPost(if(row.flag("published"))row.long("id") else -row.long("recipeId"))}
- DisposableEffect(lifecycle){val observer=LifecycleEventObserver{_,e->if(e==Lifecycle.Event.ON_RESUME)vm.refresh()};lifecycle.addObserver(observer);onDispose{lifecycle.removeObserver(observer)}}
+ DisposableEffect(lifecycle){val observer=LifecycleEventObserver{_,e->if(e==Lifecycle.Event.ON_RESUME){now=java.time.LocalDateTime.now(zone);vm.refresh()}};lifecycle.addObserver(observer);onDispose{lifecycle.removeObserver(observer)}}
  val weekTotal=data.long("weekTotal");val saved=if(weekTotal>0)(100.0-data.number("wasteRate")).coerceIn(0.0,100.0) else 0.0
  Box(Modifier.fillMaxSize()) {
   PullToRefreshBox(isRefreshing=loading,onRefresh={vm.refresh()}) {
@@ -67,7 +71,7 @@ internal fun displayAmount(q:Double,u:String):String {
      }
      Spacer(Modifier.height(12.dp))
      Text(today.format(DateTimeFormatter.ofPattern("EEEE · d MMM",Locale.ENGLISH)).uppercase(),style=MaterialTheme.typography.labelSmall,color=c.primary,fontWeight=FontWeight.Bold)
-     val greeting=when(LocalTime.now(zone).hour){in 5..11->"Good morning";in 12..17->"Good afternoon";else->"Good evening"}
+     val greeting=when(now.hour){in 5..11->"Good morning";in 12..17->"Good afternoon";else->"Good evening"}
      Text("$greeting, ${userName.trim().ifBlank{"there"}}.",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.ExtraBold)
     }
     message?.let{item{Text(it,color=c.error,style=MaterialTheme.typography.bodySmall)}}
@@ -93,7 +97,7 @@ internal fun displayAmount(q:Double,u:String):String {
     }}
     if(rescue!=null)item{
      Surface(shape=RoundedCornerShape(18.dp),border=BorderStroke(1.dp,Color(0xFF83D1D1)),color=c.surfaceContainerLow){Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
-      Row(verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.LocalFireDepartment,null,Modifier.size(20.dp),tint=Color(0xFFE89B25));Spacer(Modifier.width(6.dp));Text("Tonight's Rescue Idea",Modifier.weight(1f),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Bold)
+      Row(verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.LocalFireDepartment,null,Modifier.size(20.dp),tint=Color(0xFFE89B25));Spacer(Modifier.width(6.dp));Text(rescueMealHeading(mealSlot,rescue.words("mealTypes")),Modifier.weight(1f),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Bold)
        TextButton(onClick={rescueIndex=(rescueIndex+1).mod(ranked.size)},enabled=ranked.size>1,contentPadding=PaddingValues(4.dp)){Icon(Icons.Default.Shuffle,null,Modifier.size(16.dp));Spacer(Modifier.width(4.dp));Text("Shuffle",style=MaterialTheme.typography.labelSmall)}
       }
       Surface(Modifier.fillMaxWidth().clickable{openRecipe(rescue)},shape=RoundedCornerShape(12.dp),color=c.surface,border=BorderStroke(1.dp,c.outlineVariant)){

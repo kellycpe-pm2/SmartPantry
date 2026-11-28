@@ -37,7 +37,7 @@ internal class DashboardViewModel(app:Application):AndroidViewModel(app) {
      state.value=result;prefs.edit().putString(key,result.toString()).apply()
     } catch(t:Throwable) { if(t is CancellationException)throw t;_message.value=userMessage(t)+(if(state.value.isNotEmpty())" Showing the saved snapshot for this period; it may be out of date." else " Pull down to retry.") }
     if(start==null)try{
-     val recommendations=repo.recommendations()
+     val recommendations=repo.recommendations(preferCurrentMeal=true)
      if(repo.userId()==owner){_recommendations.value=recommendations["posts"]?.jsonArray?.mapNotNull{it as? JsonObject}.orEmpty();prefs.edit().putString("recommendations",recommendations.toString()).apply()}
     }catch(t:Throwable){if(t is CancellationException)throw t;_recommendationError.value=userMessage(t)+" Recommendations could not be refreshed."}
    } catch(t:Throwable){if(t is CancellationException)throw t;_message.value=userMessage(t)}

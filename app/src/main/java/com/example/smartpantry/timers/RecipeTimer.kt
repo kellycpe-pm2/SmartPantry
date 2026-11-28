@@ -14,6 +14,8 @@ import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.example.smartpantry.MainActivity
+import com.example.smartpantry.notifications.NotificationRepository
+import com.example.smartpantry.hardware.NotificationHelper
 import java.util.UUID
 
 internal data class RecipeTimerState(val owner:String="",val session:String="",val title:String="",val step:Int=-1,val total:Int=0,val left:Int=0,val status:String="ready",val token:String="",val deadline:Long=0L,val wallEnd:Long=0L){
@@ -38,12 +40,13 @@ internal object RecipeTimers {
  private fun write(c:Context,s:RecipeTimerState){check(prefs(c).edit().putString("owner",s.owner).putString("session",s.session).putString("title",s.title).putInt("step",s.step).putInt("total",s.total).putInt("left",s.left).putString("status",s.status).putString("token",s.token).putLong("deadline",s.deadline).putLong("wallEnd",s.wallEnd).commit()){"Could not save this timer. Please try again."}}
  private fun alarm(c:Context,token:String,flags:Int=PendingIntent.FLAG_UPDATE_CURRENT):PendingIntent?=PendingIntent.getBroadcast(c,ID,Intent(c,RecipeTimerReceiver::class.java).setAction("com.example.smartpantry.STEP_TIMER").putExtra("token",token),flags or PendingIntent.FLAG_IMMUTABLE)
  private fun cancelAlarm(c:Context){alarm(c,"",PendingIntent.FLAG_NO_CREATE)?.let{manager(c).cancel(it);it.cancel()}}
- private fun link(s:RecipeTimerState):String {
+ private fun link(s:RecipeTimerState, completed:Boolean):String {
   val id=s.session.substringAfter(':').toLongOrNull()?:0L
   val host=if(s.session.startsWith("private:"))"private_recipe" else "recipe"
-  return "smartpantry://$host/$id?timerOwner=${Uri.encode(s.owner)}"
+  val base = "smartpantry://$host/$id?timerOwner=${Uri.encode(s.owner)}"
+  return if (completed) "$base&notificationEvent=${Uri.encode("timer:${s.token}")}" else base
  }
- private fun openIntent(c:Context,s:RecipeTimerState)=PendingIntent.getActivity(c,ID,Intent(c,MainActivity::class.java).setData(Uri.parse(link(s))).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+ private fun openIntent(c:Context,s:RecipeTimerState,completed:Boolean=false)= PendingIntent.getActivity(c,ID,Intent(c,MainActivity::class.java).setData(Uri.parse(link(s,completed))).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
  private fun schedule(c:Context,s:RecipeTimerState){
   check(exactAllowed(c)){"Allow Alarms & reminders for SmartPantry, then start the timer again."}
   // AlarmClock is appropriate for the explicitly started cooking timer and wakes during idle.
@@ -63,19 +66,27 @@ internal object RecipeTimers {
  @Synchronized fun resume(c:Context){val s=read(c);if(s.status!="paused")return;check(exactAllowed(c)){"Allow Alarms & reminders, then resume the timer."};val next=s.copy(status="running",token=UUID.randomUUID().toString(),deadline=SystemClock.elapsedRealtime()+s.left*1000L,wallEnd=System.currentTimeMillis()+s.left*1000L);write(c,next);try{schedule(c,next)}catch(e:Exception){write(c,s);throw e}}
  @Synchronized fun reset(c:Context){cancelAlarm(c);write(c,RecipeTimerState());NotificationManagerCompat.from(c).cancel(ID)}
  fun notificationsEnabled(c:Context,owner:String):Boolean {
-  if(!c.getSharedPreferences("notifications_$owner",Context.MODE_PRIVATE).getBoolean("push",false))return false
+  val settings = c.getSharedPreferences("notifications_$owner", Context.MODE_PRIVATE)
+  if (!settings.getBoolean("push", false) || !settings.getBoolean("timers_enabled", true)) return false
   if(!NotificationManagerCompat.from(c).areNotificationsEnabled())return false
   return Build.VERSION.SDK_INT<26||(c.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).getNotificationChannel(CHANNEL)?.importance!=NotificationManager.IMPORTANCE_NONE
  }
  @Synchronized fun complete(c:Context,token:String){
   val s=read(c);if(s.status!="running"||s.token!=token||s.owner!=prefs(c).getString("activeOwner",""))return
   if(System.currentTimeMillis()+500<s.wallEnd)return
+  val title = s.title.ifBlank { "SmartPantry cooking timer" }
+  val body = "Step ${s.step+1} timer finished — check your food."
+  val recipe = s.session.substringAfter(':').toLongOrNull() ?: 0L
+  val target = if (s.session.startsWith("private:")) -recipe else recipe
+  val saved = runCatching {
+   NotificationRepository(c, s.owner).recordTimer(s.token, title, body, target, s.wallEnd)
+  }.isSuccess
   write(c,s.copy(status="finished",left=0));cancelAlarm(c)
+  if (saved) runCatching { NotificationHelper.triggerImmediateCheck(c) }
   val nm=c.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
   if(Build.VERSION.SDK_INT>=26){val channel=NotificationChannel(CHANNEL,"Cooking step timers",NotificationManager.IMPORTANCE_HIGH).apply{description="Reminders for cooking timers you start";enableVibration(true)};nm.createNotificationChannel(channel)}
   if(!notificationsEnabled(c,s.owner))return
-  val body="Step ${s.step+1} timer finished — check your food."
-  val notification=NotificationCompat.Builder(c,CHANNEL).setSmallIcon(android.R.drawable.ic_lock_idle_alarm).setContentTitle(s.title.ifBlank{"SmartPantry cooking timer"}).setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(body)).setContentIntent(openIntent(c,s)).setPriority(NotificationCompat.PRIORITY_HIGH).setCategory(NotificationCompat.CATEGORY_ALARM).setDefaults(NotificationCompat.DEFAULT_SOUND or NotificationCompat.DEFAULT_VIBRATE).setAutoCancel(true).build()
+  val notification=NotificationCompat.Builder(c,CHANNEL).setSmallIcon(android.R.drawable.ic_lock_idle_alarm).setContentTitle(s.title.ifBlank{"SmartPantry cooking timer"}).setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(body)).setContentIntent(openIntent(c,s,completed=true)).setPriority(NotificationCompat.PRIORITY_HIGH).setCategory(NotificationCompat.CATEGORY_ALARM).setDefaults(NotificationCompat.DEFAULT_SOUND or NotificationCompat.DEFAULT_VIBRATE).setAutoCancel(true).build()
   try{NotificationManagerCompat.from(c).notify(ID,notification)}catch(_:SecurityException){}
  }
  @Synchronized fun recover(c:Context){

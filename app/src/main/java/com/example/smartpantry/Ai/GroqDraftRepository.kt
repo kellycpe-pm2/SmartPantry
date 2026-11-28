@@ -15,7 +15,7 @@ import kotlin.coroutines.resumeWithException
 
 /** Explicit AI-only endpoint. No automatic community/template fallback or automatic retries. */
 internal class GroqDraftRepository {
- suspend fun create(name:String,catalog:List<JsonObject>,amount:String="",dietary:String="Unspecified"):RecipeDraft = suspendCancellableCoroutine {continuation->
+ suspend fun create(name:String,catalog:List<JsonObject>,amount:String="",dietary:String="Unspecified",mealTypes:List<String> = emptyList()):RecipeDraft = suspendCancellableCoroutine {continuation->
   val owner=supabase.auth.currentUserOrNull()?.id
   val token=supabase.auth.currentSessionOrNull()?.accessToken
   if(owner==null || token==null){continuation.resumeWithException(IllegalStateException("Please sign in again."));return@suspendCancellableCoroutine}
@@ -29,7 +29,7 @@ internal class GroqDraftRepository {
     connection.setRequestProperty("Authorization","Bearer $token");connection.setRequestProperty("apikey",supabase.supabaseKey)
     connection.setRequestProperty("Content-Type","application/json");connection.setRequestProperty("X-Request-ID",requestId)
     android.util.Log.i("RecipeAI","Request $requestId started")
-    connection.outputStream.use{it.write(buildJsonObject{put("action","generate");put("clientVersion",2);put("name",name);put("amount",amount);put("dietary",dietary);put("requestId",requestId)}.toString().toByteArray(Charsets.UTF_8))}
+    connection.outputStream.use{it.write(buildJsonObject{put("action","generate");put("clientVersion",2);put("name",name);put("amount",amount);put("dietary",dietary);put("mealTypes",JsonArray(mealTypes.map{JsonPrimitive(it)}));put("requestId",requestId)}.toString().toByteArray(Charsets.UTF_8))}
     val status=connection.responseCode
     android.util.Log.i("RecipeAI","Request $requestId HTTP $status")
     val body=(if(status in 200..299)connection.inputStream else connection.errorStream)?.bufferedReader()?.use{it.readText().take(100000)}.orEmpty()
@@ -53,7 +53,9 @@ internal class GroqDraftRepository {
     data.rows("unresolved").forEach{row->unresolved+=UnresolvedIngredient(cleanInput(row.str("name"),100,0),quantityText(row.number("quantity")),normalizedUnit(row.str("unit")))}
     val value=RecipeDraft(title=cleanDisplay(data.str("title")).take(150),category=data.str("category","Malaysian"),description=cleanInput(data.str("description"),5000,8),vegan=data.flag("vegan"),
      cuisine=data.str("cuisine").ifBlank{data.str("category").takeIf{it in listOf("Malaysian","Malay","Chinese","Indian","Asian","Western")}.orEmpty()},dishType=data.str("dishType"),dietary=if(data.flag("vegan"))"Vegan" else data.str("dietary",dietary),
-     source="AI-generated draft via Groq · Review before saving",ingredients=resolved,unresolved=unresolved,steps=data.words("steps").map{cleanInput(it,500,2)})
+     mealTypes=data.words("mealTypes"),source="AI-generated draft via Groq · Review before saving",ingredients=resolved,unresolved=unresolved,steps=data.words("steps").map{cleanInput(it,500,2)})
+    require(validMealTypes(value.mealTypes)){"AI returned unsupported meal types. Your form is unchanged."}
+    check(mealTypes.all{it in value.mealTypes}){"AI did not apply the requested meal types. Update recipe-draft or generate without a meal preference, then set it manually."}
     value.problem(allowUnresolved=true)?.let{throw IllegalStateException("AI returned an incomplete draft: $it")}
     (resolved.map{it.quantity to it.unit}+unresolved.map{it.quantity to it.unit}).forEach{(text,unit)->val q=text.toDoubleOrNull();require(q!=null&&q.isFinite()&&q>0&&q<=1000000&&unit in recipeUnits && (unit !in listOf("pcs","bag","carton","bunch")||q%1==0.0)){"AI returned an invalid ingredient quantity. Try another dish."}}
     if(continuation.isActive)continuation.resume(value)

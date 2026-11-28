@@ -24,18 +24,18 @@ internal class CommunityRepository {
     suspend fun call(action: String, payload: JsonObject = buildJsonObject {}): JsonObject = withContext(Dispatchers.IO) {
         supabase.auth.sessionStatus.first { it !is SessionStatus.Initializing }
         userId()
-        val response = supabase.postgrest.rpc(if(action in setOf("feed","draft","save_recipe","catalog","detail","add_missing","personal_needs","shopping_items")) "community_design_v1" else "community_api", buildJsonObject {
+        val response = supabase.postgrest.rpc(if(action in setOf("feed","draft","save_recipe","catalog","detail","add_missing","personal_needs","shopping_items")) "community_meals_v1" else "community_api", buildJsonObject {
             put("p_action", action); put("p_payload", payload)
         })
         Json.parseToJsonElement(response.data) as? JsonObject ?: error("The server returned an unexpected response.")
     }
     suspend fun v5(action:String,payload:JsonObject=buildJsonObject{}):JsonObject=withContext(Dispatchers.IO) {
         supabase.auth.sessionStatus.first { it !is SessionStatus.Initializing }; userId()
-        Json.parseToJsonElement(supabase.postgrest.rpc("community_design_v1",buildJsonObject { put("p_action",action);put("p_payload",payload) }).data).jsonObject
+        Json.parseToJsonElement(supabase.postgrest.rpc("community_meals_v1",buildJsonObject { put("p_action",action);put("p_payload",payload) }).data).jsonObject
     }
-    suspend fun recommendations(search:String="",page:Int=0):JsonObject=withContext(Dispatchers.IO) {
+    suspend fun recommendations(search:String="",page:Int=0,mealTypes:List<String> = emptyList(),preferCurrentMeal:Boolean=false):JsonObject=withContext(Dispatchers.IO) {
         supabase.auth.sessionStatus.first { it !is SessionStatus.Initializing }; userId()
-        Json.parseToJsonElement(supabase.postgrest.rpc("community_for_you_v6",buildJsonObject { put("p_search",search);put("p_page",page) }).data).jsonObject
+        Json.parseToJsonElement(supabase.postgrest.rpc("community_meals_for_you",buildJsonObject { put("p_search",search);put("p_page",page);put("p_meal_types",buildJsonArray{mealTypes.forEach{add(it)}});put("p_prefer_current",preferCurrentMeal) }).data).jsonObject
     }
     /** Copy immediately: no dependency on a gallery permission surviving Activity recreation. */
     suspend fun importImage(context: Context, uri: Uri): String = withContext(Dispatchers.IO) {

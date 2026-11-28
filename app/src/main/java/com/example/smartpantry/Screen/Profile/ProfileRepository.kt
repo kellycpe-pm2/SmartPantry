@@ -48,7 +48,7 @@ object ProfileRepository {
         val id = supabase.auth.currentUserOrNull()?.id ?: error("Not signed in")
         supabase.from(TABLE).update(
             ProfileUpdate(name, phone, householdSize, dateOfBirth)
-        ) { filter { eq("id", id) } }
+        ) { filter { eq("user_id", id) } }
     }
 
     suspend fun verifySignUpCode(email: String, code: String) = withContext(Dispatchers.IO) {
@@ -95,7 +95,7 @@ object ProfileRepository {
         currentAuthId = userId
 
         supabase.from(TABLE)
-            .select { filter { eq("id", userId) } }
+            .select { filter { eq("user_id", userId) } }
             .decodeSingle<User>()
     }
 
@@ -111,7 +111,7 @@ object ProfileRepository {
                 dateOfBirth = profile.dateOfBirth
             )
         ) {
-            filter { eq("id", userId) }
+            filter { eq("user_id", userId) }
         }
     }
 }

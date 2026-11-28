@@ -10,6 +10,7 @@ const units = ["g", "kg", "mL", "L", "pcs", "bag", "carton", "bunch"];
 const counts = new Set(["pcs", "bag", "carton", "bunch"]);
 const cuisines = ["Malaysian", "Malay", "Chinese", "Indian", "Asian", "Western"];
 const dishes = ["Rice dishes", "Noodles", "Light meals", "Desserts"];
+const mealTypes = ["Breakfast", "Lunch", "Dinner", "Snack / Tea time"];
 const diets = ["Unspecified", "Halal", "Vegetarian", "Vegan"];
 type Catalogue = { id: number; name: string; unit: string }[];
 function clean(value: unknown, limit: number, maxBreaks = 4): string {
@@ -29,6 +30,8 @@ export function validateDraft(value: any, catalog: Catalogue) {
   const steps = value.steps.map((s: unknown) => clean(s, 500, 2));
   if (!title || steps.some((s: string) => !s) || !cuisines.includes(value.cuisine) || !dishes.includes(value.dishType) || !diets.includes(value.dietary) || typeof value.vegan !== "boolean") throw new Error("Invalid classification");
   if (value.dietary === "Vegan" && !value.vegan) throw new Error("Inconsistent vegan classification");
+  const meals = value.mealTypes ?? [];
+  if (!Array.isArray(meals) || meals.length>4 || meals.some((m:unknown)=>typeof m!=="string" || !mealTypes.includes(m)) || new Set(meals).size!==meals.length) throw new Error("Invalid meal types");
   const ingredients: any[] = [], unresolved: any[] = [];
   for (const row of value.ingredients) {
     const name = clean(row.name, 100, 0), q = row.quantity, unit = row.unit;
@@ -48,7 +51,7 @@ export function validateDraft(value: any, catalog: Catalogue) {
     } else ingredients.push({ id: known.id, name: known.name, quantity: q, unit });
   }
   return { title, description, category: value.cuisine, cuisine: value.cuisine, dishType: value.dishType,
-    dietary: value.vegan ? "Vegan" : value.dietary, vegan: value.vegan, ingredients, unresolved, steps };
+    dietary: value.vegan ? "Vegan" : value.dietary, mealTypes: meals, vegan: value.vegan, ingredients, unresolved, steps };
 }
 const schema = {
   type: "object", additionalProperties: false,
@@ -58,8 +61,9 @@ const schema = {
     ingredients: { type: "array", items: { type: "object", additionalProperties: false,
       properties: { id: { type: "integer" }, name: { type: "string" }, quantity: { type: "number" }, unit: { type: "string", enum: units } },
       required: ["id", "name", "quantity", "unit"] } },
+    mealTypes: { type: "array", items: { type: "string", enum: mealTypes } },
     steps: { type: "array", items: { type: "string" } },
-  }, required: ["title", "description", "cuisine", "dishType", "dietary", "vegan", "ingredients", "steps"],
+  }, required: ["title", "description", "cuisine", "dishType", "dietary", "vegan", "ingredients", "steps", "mealTypes"],
 };
 
 export async function handle(req: Request): Promise<Response> {
@@ -69,7 +73,7 @@ export async function handle(req: Request): Promise<Response> {
   const log = (event: string, extra: Record<string, unknown> = {}) => console.info(JSON.stringify({ event: "recipe_draft", requestId, stage: event, ...extra }));
   const reply = (status: number, payload: Record<string, unknown>) => {
     log("response", { status, at: stage });
-    return new Response(JSON.stringify({ ...payload, requestId, backendVersion: "recipe-draft-1127-v3" }), { status, headers });
+    return new Response(JSON.stringify({ ...payload, requestId, backendVersion: "recipe-draft-meals-1128" }), { status, headers });
   };
   const fail = (status: number, message: string) => reply(status, { message });
   if (req.method === "OPTIONS") return new Response(null, { headers });
@@ -106,6 +110,8 @@ export async function handle(req: Request): Promise<Response> {
     if (body.action === "status") return reply(200, { configured: true, model, ingredientsAvailable: catalog.length, note: "Generate a recipe to verify Groq access." });
     if (body.action !== undefined && !["generate","chat"].includes(body.action)) return fail(400, "Choose generate or chat.");
     const chat = body.action === "chat";
+    const requestedMeals = body.mealTypes ?? [];
+    if (!Array.isArray(requestedMeals) || requestedMeals.length>4 || requestedMeals.some((m:unknown)=>typeof m!=="string" || !mealTypes.includes(m)) || new Set(requestedMeals).size!==requestedMeals.length) return fail(400,"Choose supported meal types without duplicates.");
     const name = typeof body.name === "string" ? body.name.trim() : "", amount = typeof body.amount === "string" ? body.amount.trim() : "", dietary = body.dietary ?? "Unspecified";
     const question = typeof body.question === "string" ? body.question.trim() : "";
     if(chat && (!question || question.length>500)) return fail(400,"Enter a recipe question with 1–500 characters.");
@@ -119,7 +125,7 @@ export async function handle(req: Request): Promise<Response> {
     cacheId = body.requestId || crypto.randomUUID();
     const recipeContext=body.context && typeof body.context === "object" && !Array.isArray(body.context) ? body.context : {};
     const history=Array.isArray(body.history)?body.history.slice(-6).filter((m:any)=>m && ["user","assistant"].includes(m.role) && typeof m.text==="string").map((m:any)=>({role:m.role,content:clean(m.text,2000,12)})):[];
-    const input = chat ? JSON.stringify({question,context:recipeContext,history}) : JSON.stringify({ name, amount, dietary });
+    const input = chat ? JSON.stringify({question,context:recipeContext,history}) : JSON.stringify({ name, amount, dietary, mealTypes: requestedMeals });
     // Reuse the existing private request table; no new schema or pantry changes.
     stage = "request_cache";
     const { error: reservationError } = await service.from("community_request").insert({ user_id: owner, request_id: cacheId, result: { kind: "recipe_ai", state: "running", input } });
@@ -173,6 +179,7 @@ export async function handle(req: Request): Promise<Response> {
             "Quantities must be positive, with whole numbers for pcs/bag/carton/bunch. Include each ingredient used by the cooking steps.",
             "For example eggs are measured in pcs and rice may use g even if the catalogue's usual unit is kg.",
             "Give a concise description and 3–8 practical steps under 500 characters each. No image is generated.",
+            "Return suitable mealTypes using the allowed values. Include every requested meal type, adapting the dish if needed. With no request, suggest appropriate types; leave the array empty if uncertain. Meal types are not cuisine or dietary classification. The owner reviews them before saving.",
             "Respect dietary preference. For Halal avoid incompatible ingredients without claiming certification. Include appropriate cooking instructions.",
             "Cuisine and dish type must use the allowed schema values. Catalogue [id, exact name, usual unit]:",
             JSON.stringify(catalog.map(r => [r.id, r.name, r.unit])),
@@ -193,6 +200,7 @@ export async function handle(req: Request): Promise<Response> {
     let draft: any;
     try { draft = validateDraft(JSON.parse(output.choices?.[0]?.message?.content ?? ""), catalog); }
     catch { return fail(422, "AI returned an incomplete recipe. Your existing form is unchanged; try another dish."); }
+    if (requestedMeals.some((m:string)=>!draft.mealTypes.includes(m))) return fail(422,"The draft did not meet your meal preferences. Try again or set meal types manually.");
     if ((dietary === "Vegan" && !draft.vegan) || (dietary !== "Unspecified" && draft.dietary !== dietary)) return fail(422, "The draft did not meet your dietary preference. Try again.");
     if (draft.unresolved.length && body.clientVersion !== 2) return fail(422, "Some ingredients need manual matching. Update the app or create this recipe manually.");
     draft = { ...draft, amount, source: "AI-generated draft via Groq" };

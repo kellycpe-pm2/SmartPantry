@@ -84,7 +84,7 @@ private data class ListItem(
     val purchased: Boolean = false,
     val photoUri: String? = null,
     val ingredientId: Long? = null,
-    val customIngredientId: Long? = null,
+    val legacyCustomIngredientId: Long? = null,
     val plannedQuantity: Double = quantity,
     val unitPrice: Double? = null,
     val handled: Boolean = false,
@@ -104,6 +104,7 @@ private data class PantryBatch(
     val note: String = "",
     val sourceItemId: Long? = null,
     val ingredientId: Long? = null,
+    val legacyCustomIngredientId: Long? = null,
     val imageRes: Int? = null,
     val photoUri: String? = null
 )
@@ -219,28 +220,22 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
                 ListItem(0, ingredient.ingredientName, 1.0, unit.orEmpty(),
                     imageRes = ingredientImage(ingredient.ingredientName,id), ingredientId = id, photoUri=ingredient.image?.takeIf{it.isNotBlank()})
             }
-            val custom = repository.customIngredients(cacheOnly).map {
-                ListItem(0, it.name, 1.0, "pcs", customIngredientId = it.id, photoUri=it.imagePath?.takeIf{it.isNotBlank()})
-            }
             val localCustom=repository.localIngredients().map { row -> ListItem(0,row.displayName.orEmpty(),1.0,row.unit,
-                ingredientId=row.ingredientId,customIngredientId=row.customIngredientId,photoUri=row.photoPath,
+                ingredientId=row.ingredientId,legacyCustomIngredientId=row.legacyCustomIngredientId,photoUri=row.photoPath,
                 imageRes=ingredientImage(row.displayName.orEmpty(),row.ingredientId)) }
             val bySystemId = system.associateBy { it.ingredientId }
-            val byCustomId = custom.associateBy { it.customIngredientId }
             val remoteItems = repository.items(cacheOnly).map { row ->
-                val entry = if (row.ingredientId != null) bySystemId[row.ingredientId]
-                else byCustomId[row.customIngredientId]
+                val entry = bySystemId[row.ingredientId]
                 (entry ?: ListItem(0, "Unavailable ingredient", 1.0, row.unit)).copy(
                     id = row.id, name=row.displayName ?: entry?.name ?: "Unavailable ingredient", quantity = row.purchaseQuantity, unit = row.unit,
-                    purchased = row.isPurchased, ingredientId = row.ingredientId,
-                    customIngredientId = row.customIngredientId, plannedQuantity = row.plannedQuantity,
+                    purchased = row.isPurchased, ingredientId = row.ingredientId, legacyCustomIngredientId=row.legacyCustomIngredientId,
+                    plannedQuantity = row.plannedQuantity,
                     unitPrice=row.unitPrice,handled=row.reviewHandled,photoUri=row.photoPath ?: entry?.photoUri,
                     imageRes=if(row.photoPath=="")null else ingredientImage(row.displayName ?: entry?.name.orEmpty(),row.ingredientId)
                 )
             }
             catalog = system.sortedWith(compareBy({ it.ingredientId !in catalogImages.keys }, { it.name })) +
-                    custom.filter{old->system.none{it.name.trim().equals(old.name.trim(),true)}}.sortedBy { it.name } +
-                    remoteItems.filter { row -> (system+custom).none { it.name.trim().equals(row.name.trim(),true) } }.distinctBy { it.name.trim().lowercase() }.map { it.copy(id=0) }
+                    remoteItems.filter { row -> system.none { it.name.trim().equals(row.name.trim(),true) } }.distinctBy { it.name.trim().lowercase() }.map { it.copy(id=0) }
             catalog=(catalog+localCustom.filter { local -> catalog.none{it.name.trim().equals(local.name.trim(),true)} }).sortedBy{it.name.lowercase()}
             // Read everything first. Never publish an empty interim stock snapshot.
             val nextStored = repository.storedIds(cacheOnly)
@@ -306,13 +301,13 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
     suspend fun saveItem(item: ListItem) {
         val photo = item.photoUri
         val saved = repository.save(RemoteShoppingItem(
-            item.id,item.ingredientId,item.customIngredientId,item.plannedQuantity,
+            item.id,item.ingredientId,item.legacyCustomIngredientId,item.plannedQuantity,
             item.quantity,item.unit,item.purchased,item.unitPrice,photo,item.handled
         ),item.name,item.requestId)
-        val updated=item.copy(id=saved.id,ingredientId=saved.ingredientId,
+        val updated=item.copy(id=saved.id,ingredientId=saved.ingredientId,legacyCustomIngredientId=saved.legacyCustomIngredientId,
             name=saved.displayName ?: item.name,quantity=saved.purchaseQuantity,plannedQuantity=saved.plannedQuantity,
             unit=saved.unit,purchased=saved.isPurchased,unitPrice=saved.unitPrice,handled=saved.reviewHandled,
-            customIngredientId=saved.customIngredientId,photoUri=saved.photoPath ?: photo)
+            photoUri=saved.photoPath ?: photo)
         items=(items.filterNot{it.id==item.id || it.id==updated.id}+updated).sortedBy{it.id}
         offline=repository.offline;pendingCount=repository.pendingCount
         // New private ingredients are immediately searchable next time.
@@ -384,12 +379,23 @@ internal fun ShoppingListScreen(onBack: () -> Unit, onInventoryChanged: () -> Un
                                             if(priced.size<toBuy.size)Text("${toBuy.size-priced.size} unpriced item(s) excluded from estimate",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
-                                    val reviewTone=if(pantryKnown && reviewCount>0)Color(0xFFFFF6CF) else MaterialTheme.colorScheme.surfaceContainerLow
-                                    Surface(modifier=Modifier.fillMaxWidth().clickable(enabled=!busy){page=ShoppingPage.REVIEW;mutate{load()}},shape=RoundedCornerShape(16.dp),color=reviewTone) {
+                                    val reviewHighlighted = pantryKnown && reviewCount > 0
+                                    val reviewDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+                                    val reviewTone = when {
+                                        !reviewHighlighted -> MaterialTheme.colorScheme.surfaceContainerLow
+                                        reviewDark -> Color(0xFF3B321C)
+                                        else -> Color(0xFFFFF6CF)
+                                    }
+                                    val reviewContent = when {
+                                        !reviewHighlighted -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        reviewDark -> Color(0xFFFFE49A)
+                                        else -> Color(0xFF594800)
+                                    }
+                                    Surface(modifier=Modifier.fillMaxWidth().clickable(enabled=!busy){page=ShoppingPage.REVIEW;mutate{load()}},shape=RoundedCornerShape(16.dp),color=reviewTone,contentColor=reviewContent) {
                                         Row(Modifier.padding(horizontal=14.dp,vertical=12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                                            Icon(Icons.Default.Visibility,null,tint=MaterialTheme.colorScheme.primary,modifier=Modifier.size(26.dp))
-                                            Text(when {busy->"Checking pantry stock…";!pantryKnown->"Unable to check pantry stock";reviewCount>0->reviewCountLabel(reviewCount);else->"No purchase review"},Modifier.weight(1f),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Bold)
-                                            Icon(Icons.Default.ChevronRight,"Open purchase review",Modifier.size(24.dp))
+                                            Icon(Icons.Default.Visibility,null,tint=reviewContent,modifier=Modifier.size(26.dp))
+                                            Text(when {busy->"Checking pantry stock…";!pantryKnown->"Unable to check pantry stock";reviewCount>0->reviewCountLabel(reviewCount);else->"No purchase review"},Modifier.weight(1f),style=MaterialTheme.typography.titleSmall,fontWeight=FontWeight.Bold,color=reviewContent)
+                                            Icon(Icons.Default.ChevronRight,"Open purchase review",Modifier.size(24.dp),tint=reviewContent)
                                         }
                                     }
                                     Row(
@@ -680,7 +686,7 @@ private fun ShoppingEditor(
     }
     ShoppingIngredientPicker(catalog = catalog, selected = ingredient, onSelection = {
         ingredient = it
-        if (it != null && item.id == 0L) unit = it.unit
+        if (it != null && item.id == 0L) unit = if (it.unit.equals("loaf", ignoreCase = true)) "pcs" else it.unit
     })
     ShoppingQuantityRow(quantityText, unit, { quantityText = it }, { unit = it })
 
@@ -702,15 +708,14 @@ private fun ShoppingEditor(
                     unit = unit,
                     plannedQuantity = if (
                         item.id == 0L || item.quantity != newQuantity || item.unit != unit ||
-                        item.ingredientId != selected.ingredientId ||
-                        item.customIngredientId != selected.customIngredientId
+                        item.ingredientId != selected.ingredientId
                     ) newQuantity else item.plannedQuantity,
                     ingredientId = selected.ingredientId,
-                    customIngredientId = selected.customIngredientId,
+                    legacyCustomIngredientId = selected.legacyCustomIngredientId,
                     imageRes = selected.imageRes,
                     photoUri = selected.photoUri,
                     unitPrice=if(priceText.isBlank())null else price,
-                    handled=if(!item.name.trim().equals(selected.name.trim(),true) || item.quantity!=newQuantity || item.unit!=unit || item.ingredientId!=selected.ingredientId || item.customIngredientId!=selected.customIngredientId) false else item.handled
+                    handled=if(!item.name.trim().equals(selected.name.trim(),true) || item.quantity!=newQuantity || item.unit!=unit || item.ingredientId!=selected.ingredientId) false else item.handled
                 )
             )
         }

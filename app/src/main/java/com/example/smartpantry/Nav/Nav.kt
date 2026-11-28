@@ -36,6 +36,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import com.example.smartpantry.community.rows
+import com.example.smartpantry.community.str
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -155,18 +160,37 @@ fun AppNavHost(
         if(sessionStatus is SessionStatus.Authenticated || sessionStatus is SessionStatus.NotAuthenticated)
             com.example.smartpantry.timers.RecipeTimers.bindOwner(appContext,owner.orEmpty())
     }
-    LaunchedEffect(owner,currentRoute){
-        NotificationBadge.count.value=0
-        if(owner!=null){try{NotificationRepository(appContext).call()}catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled}catch(_:Exception){}}
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(owner, lifecycle) {
+        NotificationBadge.count.value = 0
+        if (owner != null) {
+            val notifications = NotificationRepository(appContext, owner)
+            NotificationBadge.count.value = notifications.cached()["unread"]?.toString()?.toLongOrNull() ?: 0L
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                try { notifications.call() }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { }
+            }
+        }
     }
     LaunchedEffect(externalLink,sessionStatus){
         if(externalLink.isNotBlank() && sessionStatus is SessionStatus.Authenticated){
             val uri=android.net.Uri.parse(externalLink)
-            val timerOwner=uri.getQueryParameter("timerOwner")
-            if(timerOwner!=null && timerOwner!=owner){onLinkHandled();return@LaunchedEffect}
+            val linkOwner = uri.getQueryParameter("timerOwner") ?: uri.getQueryParameter("notificationOwner")
+            if (linkOwner != null && linkOwner != owner) { onLinkHandled(); return@LaunchedEffect }
+            uri.getQueryParameter("notificationEvent")?.let { event ->
+                val notifications = NotificationRepository(appContext, owner)
+                val row = notifications.cached().rows("items").firstOrNull { it.str("event_key") == event }
+                if (row != null) runCatching { notifications.changeLocal(listOf(row), clear = false) }
+            }
             when(uri.host){
                 "private_recipe"->uri.lastPathSegment?.toLongOrNull()?.takeIf{it>0}?.let{navController.navigate("community_post/${-it}")}
-                "recipe"->uri.lastPathSegment?.toLongOrNull()?.takeIf{it>0}?.let{navController.navigate("community_post/$it")}
+                "recipe" -> uri.lastPathSegment?.toLongOrNull()?.takeIf { it > 0 }?.let { post ->
+                    val comment = uri.getQueryParameter("comment")?.toLongOrNull() ?: 0L
+                    if (comment > 0) navController.navigate("notification_post/$post?comment=$comment")
+                    else navController.navigate("community_post/$post")
+                }
+                "shopping" -> navController.navigate("shopping_list")
                 "notifications"->navController.navigate("notifications")
                 "batch"->{val parts=uri.pathSegments;val ing=parts.getOrNull(0)?.toLongOrNull();val batch=parts.getOrNull(1)?.toLongOrNull();if(ing!=null&&batch!=null)navController.navigate("ingredient_detail/$ing?batchId=$batch")}
             }
@@ -383,7 +407,10 @@ fun AppNavHost(
 
             composable("notifications") {
                 NotificationScreen(onBack={navController.popBackStack()},
-                    onPost={post,comment->navController.navigate("notification_post/$post?comment=$comment")},
+                    onPost={post,comment->
+                        if (comment > 0) navController.navigate("notification_post/$post?comment=$comment")
+                        else if (post != 0L) navController.navigate("community_post/$post")
+                    },
                     onBatch={ingredient,batch->navController.navigate("ingredient_detail/$ingredient?batchId=$batch")},
                     onRecipes={query->navController.navigate("recipe_search?query=${android.net.Uri.encode(query)}")},
                     onShopping={navController.navigate("shopping_list")})

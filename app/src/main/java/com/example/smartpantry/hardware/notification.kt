@@ -17,6 +17,10 @@ import com.example.smartpantry.MainActivity
 import com.example.smartpantry.community.*
 import com.example.smartpantry.notifications.NotificationRepository
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.first
+import com.example.smartpantry.storage.remote.supabase
+import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.status.SessionStatus
 import java.time.LocalTime
 import java.time.ZoneId
 
@@ -37,6 +41,7 @@ object NotificationHelper {
 /** Auth-scoped server snapshot; never scans all local users' inventory. Periodic, not instant remote push. */
 class ExpiryCheckWorker(context:Context,params:WorkerParameters):CoroutineWorker(context,params){
  override suspend fun doWork():Result{
+  supabase.auth.sessionStatus.first { it !is SessionStatus.Initializing }
   val repo=NotificationRepository(applicationContext)
   val owner=runCatching{repo.owner()}.getOrNull()?:return Result.success()
   try{
@@ -46,9 +51,15 @@ class ExpiryCheckWorker(context:Context,params:WorkerParameters):CoroutineWorker
    val hour=LocalTime.now(ZoneId.of("Asia/Kuala_Lumpur")).hour
    val start=settings.long("quiet_start").toInt();val end=settings.long("quiet_end").toInt()
    if(settings.flag("quiet") && (if(start>end)hour>=start||hour<end else hour>=start&&hour<end))return Result.success()
-   data.rows("items").filter{it.str("read_at").isBlank() && !repo.sent(it.long("id"))}.take(5).forEach{row->
-    val link=when(row.str("category")){"Interactions"->"smartpantry://recipe/${row.long("post_id")}";"Pantry"->"smartpantry://batch/${row.long("ingredient_id")}/${row.long("batch_id")}";else->"smartpantry://notifications"}
-    NotificationHelper.showNotification(applicationContext,(owner+row.long("id")).hashCode(),row.str("title"),row.str("body"),link);repo.markSent(row.long("id"))
+   data.rows("items").asSequence().filter { it.str("kind") != "timer" && repo.claimDeviceAlert(it) }.take(5).forEach { row ->
+    val target = when (row.str("category")) {
+     "Interactions" -> "smartpantry://recipe/${row.long("post_id")}?comment=${row.long("comment_id")}"
+     "Pantry" -> "smartpantry://batch/${row.long("ingredient_id")}/${row.long("batch_id")}"
+     else -> "smartpantry://shopping"
+    }
+    val link = Uri.parse(target).buildUpon().appendQueryParameter("notificationOwner", owner)
+     .appendQueryParameter("notificationEvent", row.str("event_key")).build().toString()
+    NotificationHelper.showNotification(applicationContext, (owner + row.str("event_key")).hashCode(), row.str("title"), row.str("body").take(90), link)
    }
    return Result.success()
   }catch(cancelled:CancellationException){throw cancelled}catch(_:Exception){return Result.retry()}

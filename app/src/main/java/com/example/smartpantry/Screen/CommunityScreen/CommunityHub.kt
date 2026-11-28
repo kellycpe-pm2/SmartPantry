@@ -54,7 +54,7 @@ internal fun CommunityHub(vm:CommunityViewModel,mode:String,search:String,onSear
  val snackbar=remember{SnackbarHostState()};val scope=rememberCoroutineScope()
  val c=MaterialTheme.colorScheme
  fun open(row:JsonObject) { if(row.flag("published"))onOpenPost(row.long("id")) else onOpenPersonal(row.long("recipeId")) }
- LaunchedEffect(mode,search) { if(mode=="for_me")vm.loadRecommendations(search) }
+ LaunchedEffect(mode,search,filters) { if(mode=="post" || mode=="for_me")vm.loadRecommendations(if(mode=="for_me")search else "",mealTypes=filters.words("mealTypes")) }
  Box(Modifier.fillMaxSize()) {
   Column {
    AnimatedVisibility(visible=showTools || mode!="post") {
@@ -71,10 +71,10 @@ internal fun CommunityHub(vm:CommunityViewModel,mode:String,search:String,onSear
      if(mode=="personal")Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
       listOf("All","Published","Private").forEach{label->FilterChip(selected=publication==label,onClick={publication=label},label={Text(label)})}
      }
-     if(mode in setOf("post","saved") && filters.isNotEmpty())Text("Filters: "+filters.entries.joinToString(" · "){it.value.jsonPrimitive.content},style=MaterialTheme.typography.labelSmall,color=c.primary)
+     if(mode in setOf("post","saved") && filters.isNotEmpty())Text("Filters: "+filters.entries.joinToString(" · "){if(it.value is JsonArray)it.value.jsonArray.map{v->v.jsonPrimitive.content}.joinToString(", ") else it.value.jsonPrimitive.content},style=MaterialTheme.typography.labelSmall,color=c.primary)
     }
    }
-   PullToRefreshBox(isRefreshing=loading || recLoading,onRefresh={vm.feed(if(mode=="saved")"saved" else "feed",search,category,keepVisible=true,filters=filters);vm.loadRecommendations(if(mode=="for_me")search else "")}) {
+   PullToRefreshBox(isRefreshing=loading || recLoading,onRefresh={vm.feed(if(mode=="saved")"saved" else "feed",search,category,keepVisible=true,filters=filters);vm.loadRecommendations(if(mode=="for_me")search else "",mealTypes=filters.words("mealTypes"))}) {
    LazyColumn(Modifier.fillMaxSize(),state=listState,contentPadding=PaddingValues(18.dp,4.dp,18.dp,154.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
     if(mode=="post" || mode=="for_me") {
      item {
@@ -86,7 +86,7 @@ internal fun CommunityHub(vm:CommunityViewModel,mode:String,search:String,onSear
      when {
       recLoading && recs.isEmpty()->item { LinearProgressIndicator(Modifier.fillMaxWidth());Text("Checking pantry quantities and recipe ingredients…",style=MaterialTheme.typography.bodySmall) }
       recFailed->item { HubNotice("Recommendations could not be refreshed. Check your connection and pull down to retry. Previously loaded results may be out of date.") }
-      recs.isEmpty()->item { HubNotice(if(pantryEmpty)"There is no available stock synced to the server. Add or sync stock in Pantry, then pull down to refresh." else if(search.isNotBlank() && mode=="for_me")"No pantry recommendations match this search. Try another recipe name." else "No saved or published recipes match your available stock. Browse the community or add a recipe with ingredients.") }
+      recs.isEmpty()->item { HubNotice(if(pantryEmpty)"There is no available stock synced to the server. Add or sync stock in Pantry, then pull down to refresh." else if(filters.words("mealTypes").isNotEmpty())"No pantry recommendations match the selected meal types. Clear the Meal type filter or add meal types to your recipes." else if(search.isNotBlank() && mode=="for_me")"No pantry recommendations match this search. Try another recipe name." else "No saved or published recipes match your available stock. Browse the community or add a recipe with ingredients.") }
      }
      if(recs.isNotEmpty()) {
       if(mode=="post")item {
@@ -191,6 +191,7 @@ internal fun pantryCarousel(rows:List<JsonObject>):List<JsonObject> {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun RecipeFilterSheet(vm:CommunityViewModel,initial:JsonObject,onDismiss:()->Unit,onApply:(JsonObject)->Unit) {
  var cuisine by rememberSaveable { mutableStateOf(initial.str("cuisine","Any")) };var dish by rememberSaveable { mutableStateOf(initial.str("dishType","Any")) }
+ var meals by rememberSaveable { mutableStateOf(initial.words("mealTypes")) }
  var diet by rememberSaveable { mutableStateOf(initial.str("dietary","Any")) };var ingredient by rememberSaveable { mutableLongStateOf(initial.long("ingredientId")) }
  var query by rememberSaveable { mutableStateOf("") };val catalog by vm.catalog.collectAsState()
  ModalBottomSheet(onDismissRequest=onDismiss,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true)) {
@@ -198,11 +199,13 @@ internal fun pantryCarousel(rows:List<JsonObject>):List<JsonObject> {
    Text("Filter recipes",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold)
    FilterGroup("Cuisine",listOf("Any","Malaysian","Malay","Chinese","Indian","Asian","Western"),cuisine){cuisine=it}
    FilterGroup("Dish type",listOf("Any","Rice dishes","Noodles","Light meals","Desserts"),dish){dish=it}
+   MealTypeSelector(meals,{meals=it},label="Meal type · match any selected",hint=false)
+   Text("Unclassified recipes are excluded only while a meal type filter is selected.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
    FilterGroup("Dietary preference",listOf("Any","Halal","Vegetarian","Vegan"),diet){diet=it}
    Text("Groups combine. Halal information is provided by the author; it is not certification.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
    Row(Modifier.fillMaxWidth().padding(bottom=24.dp).navigationBarsPadding(),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-    OutlinedButton(onClick={cuisine="Any";dish="Any";diet="Any";ingredient=0;query=""},modifier=Modifier.weight(1f)){Text("Reset")}
-    Button(onClick={onApply(buildJsonObject {if(cuisine!="Any")put("cuisine",cuisine);if(dish!="Any")put("dishType",dish);if(diet!="Any")put("dietary",diet)})},modifier=Modifier.weight(2f)){Text("Apply filters")}
+    OutlinedButton(onClick={cuisine="Any";dish="Any";diet="Any";meals=emptyList();ingredient=0;query=""},modifier=Modifier.weight(1f)){Text("Reset")}
+    Button(onClick={onApply(buildJsonObject {if(cuisine!="Any")put("cuisine",cuisine);if(dish!="Any")put("dishType",dish);if(diet!="Any")put("dietary",diet);if(meals.isNotEmpty())put("mealTypes",JsonArray(meals.map{JsonPrimitive(it)}))})},modifier=Modifier.weight(2f)){Text("Apply filters")}
    }
   }
  }

@@ -326,7 +326,7 @@ fun CommunityScreen(
                           description=draft.description,cookingSteps=draft.steps,recipeImage=draft.image,userId=vm.userId),
                         matchInfo=null,busy=busy,modifier=Modifier.fillMaxSize(),ingredients=draft.ingredients,onEdit={screen="editor"},onAddIngredient={addIngredientOnOpen=true;screen="editor"},
                         onPublish={publish(draft.recipeId,draft.title)},onShoppingList=onShoppingList,
-                        videoUrl=draft.videoUrl,stepTimers=draft.stepTimers,needs=privateNeeds,onMissing={
+                        videoUrl=draft.videoUrl,stepTimers=draft.stepTimers,mealTypes=draft.mealTypes,needs=privateNeeds,onMissing={
                             dialogId = draft.recipeId
                             dialog = "missing"
                         }
@@ -709,7 +709,7 @@ fun CommunityScreen(
 private fun LocalRecipeDetails(
  recipe:Recipe,matchInfo:RecommendedRecipeResult?,busy:Boolean,modifier:Modifier=Modifier,
  ingredients:List<DraftIngredient> = emptyList(),onEdit:()->Unit,onPublish:()->Unit,onShoppingList:()->Unit,onAddIngredient:()->Unit=onEdit,
- needs:List<JsonObject> = emptyList(), onMissing:(()->Unit)? = null, videoUrl:String="", stepTimers:List<Int?> = emptyList()
+ needs:List<JsonObject> = emptyList(), onMissing:(()->Unit)? = null, videoUrl:String="", stepTimers:List<Int?> = emptyList(), mealTypes:List<String> = emptyList()
 ) {
  val c=MaterialTheme.colorScheme;var allSteps by rememberSaveable{mutableStateOf(false)}
  Column(modifier.verticalScroll(rememberScrollState()).padding(bottom=24.dp)){
@@ -718,6 +718,7 @@ private fun LocalRecipeDetails(
    Row(verticalAlignment=Alignment.CenterVertically){Text(recipe.recipeName,Modifier.weight(1f),style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold);Text("by You",color=c.onSurfaceVariant)}
    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){RatingSummary(0.0,0);Text("Private recipe",style=MaterialTheme.typography.labelMedium,color=c.onSurfaceVariant)}
    if(!recipe.description.isNullOrBlank())ReadableText(recipe.description!!)
+   MealTypeSummary(mealTypes)
    Text("Ingredients",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
    if (needs.isNotEmpty()) RecipeIngredientNeeds(needs) else ingredients.forEach{row->Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
     RecipePhoto(row.image.ifBlank{row.name.lowercase()},Modifier.size(34.dp).clip(CircleShape),false)
@@ -725,7 +726,6 @@ private fun LocalRecipeDetails(
    }}
    if (onMissing != null && needs.isNotEmpty()) {
     FilledTonalButton(onClick=onMissing,enabled=!busy,modifier=Modifier.fillMaxWidth()) { Text("Add missing ingredients") }
-    TextButton(onClick=onShoppingList,modifier=Modifier.fillMaxWidth()) { Text("Open shopping list") }
    }
    OutlinedButton(onClick=onAddIngredient,enabled=!busy,modifier=Modifier.fillMaxWidth()){Icon(Icons.Default.Add,null);Spacer(Modifier.width(6.dp));Text("Add ingredient to recipe")}
    CookingVideoCard(videoUrl)
@@ -946,6 +946,7 @@ private fun RecipeDetails(
             }
             val description=post.str("description").ifBlank{post.str("caption")}
             if(description.isNotBlank())ReadableText(description)
+            MealTypeSummary(data.words("mealTypes"))
             HorizontalDivider(color = c.outlineVariant)
             Text("Ingredients", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             RecipeIngredientNeeds(data.rows("ingredients"))
@@ -1095,6 +1096,7 @@ private fun RecipeEditor(vm: CommunityViewModel, modifier: Modifier, initialAddI
             UnitDropdown("Dietary",if(draft.vegan)"Vegan" else draft.dietary,listOf("Unspecified","Halal","Vegetarian","Vegan")){vm.editDraft(draft.copy(dietary=it,vegan=it=="Vegan"))}
           }
         }
+        MealTypeSelector(draft.mealTypes,{vm.editDraft(draft.copy(mealTypes=it))},enabled=!busy)
         UnitDropdown("Dish type",draft.dishType.ifBlank{"Unspecified"},listOf("Unspecified","Rice dishes","Noodles","Light meals","Desserts")){vm.editDraft(draft.copy(dishType=if(it=="Unspecified")"" else it))}
         FilledTonalButton(onClick={vm.clearError();helperVisible=true},enabled=!busy,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(12.dp)){Icon(Icons.Default.AutoAwesome,null,Modifier.size(18.dp));Spacer(Modifier.width(6.dp));Text("AI Assist")}
         Row(

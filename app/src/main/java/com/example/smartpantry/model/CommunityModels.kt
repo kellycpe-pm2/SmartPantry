@@ -33,9 +33,11 @@ internal data class RecipeDraft(
     val stepTimers:List<Int?> = emptyList(),
     val requestId: String = UUID.randomUUID().toString(),
     val publish: Boolean = false, val wasPublished: Boolean = false,
+    val mealTypes:List<String> = emptyList(),
     val cuisine: String = category.takeIf { it in listOf("Malaysian","Chinese","Asian","Western","Other") }.orEmpty(), val dishType: String = "", val dietary: String = "Unspecified"
 ) {
     fun problem(allowUnresolved:Boolean=false): String? {
+        if(!validMealTypes(mealTypes))return "Choose supported meal types without duplicates."
         if(unresolved.isNotEmpty() && !allowUnresolved)return "Match the ${unresolved.size} unresolved ingredient(s) before saving."
 
         if (title.trim().length !in 1..150) return "Enter a title with 1–150 characters."

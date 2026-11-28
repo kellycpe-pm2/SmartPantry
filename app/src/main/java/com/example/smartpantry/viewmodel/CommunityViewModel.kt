@@ -52,13 +52,16 @@ internal class CommunityViewModel(application: Application, private val saved: S
     private var recommendationJob:Job?=null
     private var recommendationPage=0
     private var activeFilters:JsonObject=buildJsonObject{}
-    fun loadRecommendations(search:String="",append:Boolean=false) {
+    private var recommendationMeals:List<String> = emptyList()
+    fun loadRecommendations(search:String="",append:Boolean=false,mealTypes:List<String>?=null) {
         recommendationJob?.cancel()
+        if(mealTypes!=null)recommendationMeals=mealTypes
+        val requestedMeals=recommendationMeals
         val target=if(append) recommendationPage+1 else 0
         recommendationJob=viewModelScope.launch {
             _recommendationLoading.value=true;_recommendationFailed.value=false
             try {
-                val data=repo.recommendations(search.trim(),target)
+                val data=repo.recommendations(search.trim(),target,requestedMeals)
                 _recommendations.value=if(append)(_recommendations.value+data.rows("posts")).distinctBy { it.long("recipeId") } else data.rows("posts")
                 _pantryEmpty.value=data.flag("pantryEmpty");_recommendationMore.value=data.flag("hasMore");recommendationPage=target
             } catch(t:Throwable) { if(t !is CancellationException) _recommendationFailed.value=true;failure(t) }
@@ -105,7 +108,7 @@ internal class CommunityViewModel(application: Application, private val saved: S
             saved["draftOwner"] = id
             clearRecipePreview(); _posts.value = emptyList(); _catalog.value = emptyList(); _mine.value = emptyList(); _detail.value = null
             _privateNeeds.value = emptyList()
-            _recommendations.value=emptyList();_pantryEmpty.value=false;_feedFailed.value=false
+            _recommendations.value=emptyList();recommendationMeals=emptyList();_pantryEmpty.value=false;_feedFailed.value=false
             boundUser = id
         }
     }
@@ -188,7 +191,7 @@ internal class CommunityViewModel(application: Application, private val saved: S
 
     fun openDraft(id: Long, ready: () -> Unit) = mutate {
         val r = repo.call("draft", buildJsonObject { put("recipeId", id) })
-        editDraft(RecipeDraft(recipeId=id,title=r.str("title"),category=r.str("category","Malaysian"),description=cleanInput(r.str("description"),5000),videoUrl=r.str("videoUrl"),stepTimers=(r["stepTimers"] as? JsonArray)?.map{it.jsonPrimitive.intOrNull}.orEmpty(),image=r.str("image"),vegan=r.flag("vegan"),
+        editDraft(RecipeDraft(recipeId=id,title=r.str("title"),category=r.str("category","Malaysian"),description=cleanInput(r.str("description"),5000),videoUrl=r.str("videoUrl"),mealTypes=r.words("mealTypes"),stepTimers=(r["stepTimers"] as? JsonArray)?.map{it.jsonPrimitive.intOrNull}.orEmpty(),image=r.str("image"),vegan=r.flag("vegan"),
             cuisine=r.str("cuisine"),dishType=r.str("dishType"),dietary=r.str("dietary","Unspecified"),publish=r.flag("published"),wasPublished=r.flag("published"),
             ingredients=r.rows("ingredients").map {
                 DraftIngredient(
@@ -216,7 +219,7 @@ internal class CommunityViewModel(application: Application, private val saved: S
             value = value.copy(image=image); editDraft(value, keepRequest=true)
             val result = repo.call("save_recipe", buildJsonObject {
                 put("requestId", value.requestId); put("recipeId",value.recipeId); put("title",value.title.trim()); put("category",value.category)
-                put("publish",value.publish);put("cuisine",value.cuisine);put("dishType",value.dishType);put("dietary",if(value.vegan)"Vegan" else value.dietary);
+                put("mealTypes",JsonArray(value.mealTypes.map{JsonPrimitive(it)}));put("publish",value.publish);put("cuisine",value.cuisine);put("dishType",value.dishType);put("dietary",if(value.vegan)"Vegan" else value.dietary);
                 put("videoUrl",value.videoUrl.trim());put("description",value.description.trim()); put("image",image); put("vegan",value.vegan)
                 put("steps",JsonArray(value.steps.map { JsonPrimitive(it.trim()) }));put("stepTimers",JsonArray(value.steps.indices.map{value.stepTimers.getOrNull(it)?.let{seconds->JsonPrimitive(seconds)}?:JsonNull}))
                 put("ingredients",JsonArray(value.ingredients.map { buildJsonObject { put("id",it.id); put("quantity",it.quantity.toDouble()); put("unit",it.unit) } }))
