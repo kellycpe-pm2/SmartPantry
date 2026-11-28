@@ -16,19 +16,21 @@ data class FoodLog(
     @SerialName("food_log_notes") val notes: String? = null,
     @SerialName("wasted_cost") val wastedCost: Double = 0.0,      // RM, 0.00 when Consumed
     @SerialName("ingredient_user_id") val ingredientUserId: Long? = null,
-    @SerialName("is_auto") val isAuto: Boolean = false
+    @SerialName("is_auto") val isAuto: Boolean = false,
+    @SerialName("food_log_created_at") val createdAt: String? = null    // set by database, read-only
 )
 
-val UNITS = listOf("g", "kg", "mL", "L", "pcs")
+val UNITS = listOf("g", "kg", "mL", "L", "pcs", "bag", "carton", "bunch")
 val CATEGORIES = listOf("Fruit", "Vegetable", "Meat", "Seafood", "Dairy", "Grain", "Snack", "Drink", "Other")
 
 /** quantity in g / mL / pcs so kg and L can be added to g and mL */
 fun FoodLog.base() = if (unit == "kg" || unit == "L") quantity * 1000 else quantity
 
-/** e.g. "1200 g · 500 mL · 3 pcs" */
+/** e.g. "1200 g · 500 mL · 3 pcs · 2 bag" (g/kg and mL/L are added together, count units stay separate) */
 fun List<FoodLog>.totalText(): String {
     fun sum(vararg u: String) = filter { it.unit in u }.sumOf { it.base() }
-    val parts = listOf("g" to sum("g", "kg"), "mL" to sum("mL", "L"), "pcs" to sum("pcs"))
+    val parts = listOf("g" to sum("g", "kg"), "mL" to sum("mL", "L")) +
+            listOf("pcs", "bag", "carton", "bunch").map { it to sum(it) }
     return parts.filter { it.second > 0 }.joinToString(" · ") { "%.0f %s".format(it.second, it.first) }.ifEmpty { "0" }
 }
 

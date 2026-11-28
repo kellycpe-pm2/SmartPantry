@@ -28,16 +28,24 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.LaunchedEffect
 import com.example.smartpantry.R
+import com.example.smartpantry.Screen.FoodLog.FoodLogViewModel
+import com.example.smartpantry.model.costText
+import com.example.smartpantry.model.totalText
 
 @Composable
 fun UserDashboardScreen(
+    foodLogVm: FoodLogViewModel,
     onOpenCommunityPost: (Long) -> Unit = {},
     onShoppingList: () -> Unit = {},
     onPantry: () -> Unit = {},
     onRecipes: () -> Unit = {},
     onRecords: () -> Unit = {}
 ) {
+    LaunchedEffect(Unit) { foodLogVm.loadWeek() }
+    val wasted = foodLogVm.week.filter { it.type == "Wasted" }
+
     val scheme = MaterialTheme.colorScheme
     val isDark = scheme.background.luminance() < 0.5f
 
@@ -94,6 +102,7 @@ fun UserDashboardScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(22.dp))
+                .clickable(onClick = onRecords)
                 .background(heroGradient)
         ) {
             Image(
@@ -109,10 +118,10 @@ fun UserDashboardScreen(
             ) {
                 Text("THIS WEEK", color = scheme.primary, fontSize = 11.sp,
                     letterSpacing = 1.4.sp, fontWeight = FontWeight.Bold)
-                Text("0.8 kg", color = scheme.primary, fontSize = 32.sp,
+                Text(wasted.totalText(), color = scheme.primary, fontSize = 32.sp,
                     lineHeight = 36.sp, fontWeight = FontWeight.Bold)
                 Text("Recorded food waste", color = scheme.onBackground, fontSize = 13.sp)
-                Text("Sample data · Weight-based only",
+                Text("Lost ${wasted.costText()} this week",
                     style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
             }
         }
@@ -122,6 +131,7 @@ fun UserDashboardScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(14.dp))
+                .clickable(onClick = onPantry)
                 .background(scheme.surfaceVariant)
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -145,10 +155,10 @@ fun UserDashboardScreen(
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold, color = scheme.onBackground)
             CompactExpiryRow("Eggs", "6 pcs · Expires tomorrow",
-                R.drawable.home_eggs)
+                R.drawable.home_eggs, onPantry)
             HorizontalDivider(color = scheme.outlineVariant)
             CompactExpiryRow("Tomatoes", "3 pcs · Expires in 2 days",
-                R.drawable.home_tomatoes)
+                R.drawable.home_tomatoes, onPantry)
         }
 
         // --- Shortcuts ---
@@ -193,11 +203,12 @@ fun UserDashboardScreen(
 }
 
 @Composable
-private fun CompactExpiryRow(name: String, detail: String, imageRes: Int) {
+private fun CompactExpiryRow(name: String, detail: String, imageRes: Int, onClick: () -> Unit = {}) {
     val scheme = MaterialTheme.colorScheme
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onClick)
             .padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically

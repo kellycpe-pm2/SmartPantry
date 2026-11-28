@@ -1,5 +1,6 @@
 package com.example.smartpantry.Screen.FoodLog
 
+import com.example.smartpantry.model.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -13,10 +14,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.example.smartpantry.model.totalText
 
 @Composable
 fun FoodLogAnalysisScreen(vm: FoodLogViewModel, onBack: () -> Unit) {
@@ -27,7 +28,8 @@ fun FoodLogAnalysisScreen(vm: FoodLogViewModel, onBack: () -> Unit) {
     val consumedColor = MaterialTheme.colorScheme.primary
     val wastedColor = MaterialTheme.colorScheme.error
     val c = MaterialTheme.colorScheme
-    val palette = listOf(c.primary, c.secondary, c.tertiary, c.error, c.outline, c.inversePrimary)
+    // theme has one teal, so make donut slices from shades between primary and primaryContainer
+    val palette = List(6) { i -> lerp(c.primary, c.primaryContainer, i / 6f) }
 
     Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -41,40 +43,11 @@ fun FoodLogAnalysisScreen(vm: FoodLogViewModel, onBack: () -> Unit) {
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             SummaryCard("Consumed", vm.consumed().totalText(), Modifier.weight(1f))
-            SummaryCard(
-                "Wasted",
-                "${vm.wasted().totalText()} · RM ${"%.2f".format(vm.wasted().sumOf { it.wastedCost })}",
-                Modifier.weight(1f)
-            )
+            SummaryCard("Wasted", "${vm.wasted().totalText()} · ${vm.wasted().costText()}", Modifier.weight(1f))
         }
 
         // waste by category (donut)
         val cat = vm.wasteByCategory(); val catTotal = cat.sumOf { it.second }
-        if (catTotal > 0) {
-            Canvas(
-                Modifier.size(160.dp).align(Alignment.CenterHorizontally)
-            ) {
-                var start = -90f
-
-                cat.forEachIndexed { i, (_, v) ->
-                    val sweep = (v / catTotal * 360).toFloat()
-
-                    drawArc(
-                        palette[i % palette.size],
-                        start,
-                        sweep,
-                        false,
-                        Offset(18f, 18f),
-                        Size(size.width - 36f, size.height - 36f),
-                        style = Stroke(36f)
-                    )
-
-                    start += sweep
-                }
-            }
-        } else {
-            Text("No wasted food records available.")
-        }
         Text("Waste by category", style = MaterialTheme.typography.titleSmall)
         Canvas(Modifier.size(160.dp).align(Alignment.CenterHorizontally)) {
             var start = -90f

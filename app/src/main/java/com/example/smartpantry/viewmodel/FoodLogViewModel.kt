@@ -1,5 +1,9 @@
 package com.example.smartpantry.Screen.FoodLog
 
+import com.example.smartpantry.model.FoodLog
+import com.example.smartpantry.model.base
+import com.example.smartpantry.model.costText
+import com.example.smartpantry.model.totalText
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Paint
@@ -12,9 +16,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.smartpantry.model.FoodLog
-import com.example.smartpantry.model.base
-import com.example.smartpantry.model.totalText
 import kotlinx.coroutines.launch
 import java.io.File
 import java.time.DayOfWeek
@@ -28,10 +29,18 @@ class FoodLogViewModel : ViewModel() {
     var records by mutableStateOf<List<FoodLog>>(emptyList()); private set
     var typeFilter by mutableStateOf("All"); private set           // All / Consumed / Wasted
     var error by mutableStateOf<String?>(null); private set
+    var editing by mutableStateOf<FoodLog?>(null)       // record being edited (null = adding)
 
     // analysis
     var days by mutableStateOf(30); private set
     var analysis by mutableStateOf<List<FoodLog>>(emptyList()); private set
+
+    // this week's records (Mon to today) for the home dashboard
+    var week by mutableStateOf<List<FoodLog>>(emptyList()); private set
+    fun loadWeek() = run {
+        val monday = LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        week = FoodLogRepository.between(monday, LocalDate.now().plusDays(1))
+    }
 
     val shown get() = records.filter { typeFilter == "All" || it.type == typeFilter }
 
@@ -74,7 +83,7 @@ class FoodLogViewModel : ViewModel() {
             add("SmartPantry Food Analysis" to 20f)
             add("Last $days days" to 14f)
             add("Consumed: ${consumed().totalText()}" to 14f)
-            add("Wasted: ${wasted().totalText()}" to 14f)
+            add("Wasted: ${wasted().totalText()}  (${wasted().costText()})" to 14f)
             add("Waste by category" to 16f); wasteByCategory().forEach { add("  ${it.first}: ${"%.0f".format(it.second)}" to 14f) }
             add("Weekly (consumed / wasted)" to 16f); weekly().forEach { add("  ${it.first}: ${"%.0f".format(it.second)} / ${"%.0f".format(it.third)}" to 14f) }
             add("Monthly waste trend" to 16f); monthly().forEach { add("  ${it.first}: ${"%.0f".format(it.second)}" to 14f) }

@@ -43,6 +43,7 @@ import com.example.smartpantry.Screen.Auth.CreateAccountScreen
 import com.example.smartpantry.Screen.Auth.LoginScreen
 import com.example.smartpantry.Screen.Auth.ResetPasswordScreen
 import com.example.smartpantry.Screen.FoodLog.FoodLogAnalysisScreen
+import com.example.smartpantry.Screen.FoodLog.FoodLogRecordScreen
 import com.example.smartpantry.Screen.FoodLog.FoodLogScreen
 import com.example.smartpantry.Screen.FoodLog.FoodLogViewModel
 import com.example.smartpantry.Screen.IngredientUI.CreateIngredientScreen
@@ -232,6 +233,7 @@ fun AppNavHost(
                     }
                 } else {
                     UserDashboardScreen(
+                        foodLogVm = foodLogVm,
                         onOpenCommunityPost = { id -> navController.navigate("community_post/$id") },
                         onShoppingList = { navController.navigate("shopping_list") },
                         onPantry = { navController.navigate("pantry") },
@@ -353,11 +355,16 @@ fun AppNavHost(
                 )
             }
 
-            composable("foodLog") {
+            composable("records") {
                 FoodLogScreen(
                     vm = foodLogVm,
-                    onAnalysis = { navController.navigate("foodAnalysis") }
+                    onAnalysis = { navController.navigate("foodAnalysis") },
+                    onAdd = { foodLogVm.editing = null; navController.navigate("foodLogForm") },
+                    onEdit = { foodLogVm.editing = it; navController.navigate("foodLogForm") }
                 )
+            }
+            composable("foodLogForm") {
+                FoodLogRecordScreen(vm = foodLogVm, onBack = { navController.popBackStack() })
             }
             composable("foodAnalysis") {
                 FoodLogAnalysisScreen(
@@ -365,9 +372,6 @@ fun AppNavHost(
                     onBack = { navController.popBackStack() }
                 )
             }
-
-            navController.navigate("foodLog")
-
             composable("admin") {
                 if (profile?.role == "admin") {
                     AdminScreen(
